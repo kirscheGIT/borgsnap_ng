@@ -65,24 +65,24 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             if [ -d "$BASEDIR" ]; then
                 BORG_BASE_DIR="$BASEDIR"
                 export BORG_BASE_DIR
-                echo "Borgbackup basedir set to $BORG_BASE_DIR"
+                msg "INFO" "Borgbackup basedir set to $BORG_BASE_DIR"
             else
                 die "Non-existent BASEDIR $BASEDIR"
             fi
         fi
         if [ "$CACHEMODE" = "" ]; then
             export CACHEMODE="ctime,size,inode"
-            echo "CACHEMODE not configured, defaulting to ctime,size,inode"
+            msg "INFO" "CACHEMODE not configured, defaulting to ctime,size,inode"
         else
-            echo "CACHEMODE set to $CACHEMODE"
+            msg "INFO" "CACHEMODE set to $CACHEMODE"
             export CACHEMODE
         fi
         if [ "$REMOTE_BORG_COMMAND" = "" ]; then
             export BORGPATH="borg1"
-            echo "REMOTE_BORG_COMMAND not configured, defaulting to $BORGPATH (for rsync.net)"
+            msg "INFO" "REMOTE_BORG_COMMAND not configured, defaulting to $BORGPATH (for rsync.net)"
         else
             export BORGPATH="$REMOTE_BORG_COMMAND"
-            echo "REMOTE_BORG_COMMAND set to $BORGPATH"
+            msg "INFO" "REMOTE_BORG_COMMAND set to $BORGPATH"
         fi
 
         export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
