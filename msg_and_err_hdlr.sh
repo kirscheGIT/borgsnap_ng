@@ -93,6 +93,12 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
                 err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
             unset lexit_status
+            return 0
+        }
+
+         die() {
+            echo "$0: $*" >&2
+            exit 1
         }
     fi
 fi

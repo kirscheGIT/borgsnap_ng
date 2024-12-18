@@ -11,6 +11,16 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         export LASTFUNC=""
     fi
 
+    if [ -z "${MSG_DEFINED+x}" ]; then
+        msg() {
+            LASTFUNC="msg"
+            printf "WARNING: msg() function called without invoking the debugging.sh script or explicit disabling it!\n"
+            printf "WARNING: No debug or verbose message outputs available!\n"
+            return 0
+        }
+        export MSG_DEFINED=1
+    fi
+
     set -u
 
     msg "msg_and_err_hdlr.sh invoked"
@@ -19,29 +29,28 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
     readconfigfile() {
         LASTFUNC="readconfigfile"
         lconfigfile="$1"
+        
 
         [ -r "$lconfigfile" ] || die "$LASTFUNC: Unable to open $lconfigfile"
         msg "DEBUG" "$LASTFUNC: Reading Config File $lconfigfile"
         # shellcheck disable=SC1090
         . "$lconfigfile"
 
+        # TODO: Modifiy to check if borg user is used
+        #[ "$(id -u)" -eq 0 ] || die "Must be run as root"
+        [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
+   
         BORG_PASSPHRASE=$(cat "$PASS")
         export BORG_PASSPHRASE
-
-        if [ "$RSH" != "" ]; then
-            BORG_RSH="$RSH"
-        else
-            BORG_RSH=ssh
-        fi
-        echo "RSH = $BORG_RSH"
-        export BORG_RSH
-
+        
         [ "$BORG_PASSPHRASE" != "" ] || die "Unable to read passphrase from file $PASS"
+
         if [ "$LOCAL" != "" ]; then
             [ -d "$LOCAL" ] || die "Non-existent output directory $LOCAL"
         fi
+
         scriptpath="$(cd -- "$(dirname "$0")" >/dev/null 2>&1; pwd -P)"
-        echo "scriptpath is $scriptpath/$PRE_SCRIPT"
+        msg "INFO" "$LASTFUNC: scriptpath is $scriptpath/$PRE_SCRIPT"
         if [ "$PRE_SCRIPT" != "" ]; then
             [ -f "$PRE_SCRIPT" ] || die "PRE_SCRIPT specified but could not be found: $PRE_SCRIPT"
             [ -x "$PRE_SCRIPT" ] || die "PRE_SCRIPT specified but could not be executed (run command: chmod +x $PRE_SCRIPT)"
@@ -54,11 +63,11 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
 
         if [ "$BASEDIR" != "" ]; then
             if [ -d "$BASEDIR" ]; then
-            BORG_BASE_DIR="$BASEDIR"
-            export BORG_BASE_DIR
-            echo "Borgbackup basedir set to $BORG_BASE_DIR"
+                BORG_BASE_DIR="$BASEDIR"
+                export BORG_BASE_DIR
+                echo "Borgbackup basedir set to $BORG_BASE_DIR"
             else
-            die "Non-existent BASEDIR $BASEDIR"
+                die "Non-existent BASEDIR $BASEDIR"
             fi
         fi
         if [ "$CACHEMODE" = "" ]; then
