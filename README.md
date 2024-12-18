@@ -1,4 +1,8 @@
-# borgsnap - Backups using ZFS snapshots, borg, and (optionally) rsync.net
+# borgsnap_ng is a POSIX comptaible fork of borgsnap 
+# Backups using ZFS snapshots, borg, and (optionally) remote borg servers like 
+# rsync.net, hetzner, ...
+
+# TODO: Update README
 
 This fork adds:
 

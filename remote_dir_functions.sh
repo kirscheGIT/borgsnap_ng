@@ -1,4 +1,7 @@
 #!/bin/sh
+# remote_dir_functions.sh is part of borgsnap_ng - licensed under GPLv3. See the LICENSE file for additional
+# details.
+
 # shellcheck disable=SC3043
 if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     export REMOTE_DIR_FUNCTION_SCRIPT_SOURCED=1    

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# borgsnap - licensed under GPLv3. See the LICENSE file for additional
+# borgsnap_ng - licensed under GPLv3. See the LICENSE file for additional
 # details.
 #
 # Perform a ZFS snapshot and rolling backups using borg.

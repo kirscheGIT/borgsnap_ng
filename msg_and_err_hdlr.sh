@@ -1,4 +1,7 @@
 #!/bin/sh
+# msg_and_err_hdlr.sh  - licensed under GPLv3. See the LICENSE file for additional
+# details.
+
 # shellcheck disable=SC3043
 if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
     export MSG_AND_ERR_HDLR_SOURCED=1  
