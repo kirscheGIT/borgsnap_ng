@@ -13,20 +13,6 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         export LASTFUNC=""
     fi
 
-    # Function name to check
-    # func_name="msg"
-
-    # # Check if the function is defined
-    # if ! eval "type $func_name" >/dev/null 2>&1; then
-    #     # Function does not exist, define it
-    #     msg() {
-    #         #printf "DEBUG is not enabled"
-    #         return 0
-    #     }
-    # fi
-
-    # Check if the function is defined using a variable
-
     if [ -z "${MSG_DEFINED+x}" ]; then
         msg() {
             LASTFUNC="msg"
