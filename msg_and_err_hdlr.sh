@@ -37,23 +37,23 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         fi
         printf "msg_and_err_hdlr.sh: Message handler is enabled with message level - %s - \n" "$MSG_LEVEL"
         msg() {
-            local calling_function="$LASTFUNC"
+            local lcalling_function="$LASTFUNC"
             LASTFUNC="msg"
             if [ "$#" -eq 1 ]; then
                 printf "%s\n" "$1"
 
             elif [ "$#" -eq 2 ]; then
-                local msg_type="$1"
-                local msg_content="$2"
-                local msg_key
-                local value
+                lmsg_type="$1"
+                lmsg_content="$2"
+                lmsg_key=
+                lvalue=
 
-                value=$(eval "echo \$${msg_type##*[!0-9_a-z_A-Z]*}" 2>/dev/null)
+                lvalue=$(eval "echo \$${lmsg_type##*[!0-9_a-z_A-Z]*}" 2>/dev/null)
             
-                if [ -n "$value" ]; then
-                    msg_key="$value"
-                    if [ "$MSG_LEVEL" -ge "$msg_key" ]; then
-                        printf "%s: %s in Function %s\n" "$msg_type" "$msg_content" "$calling_function"
+                if [ -n "$lvalue" ]; then
+                    lmsg_key="$lvalue"
+                    if [ "$MSG_LEVEL" -ge "$lmsg_key" ]; then
+                        printf "%s: %s in Function %s\n" "$lmsg_type" "$lmsg_content" "$lcalling_function"
                     fi
                 else
                     echo "$1 Is a wrong key word"
@@ -61,7 +61,12 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
             else
                 printf "USAGE ERROR: msg() function - Too many parameters.  max. 2 parameters alowed. Instead %i parameters were provided: %s\n" "$#" "$*"
             fi
-            LASTFUNC="$calling_function"
+            LASTFUNC="$lcalling_function"
+            unset lcalling_function
+            unset lmsg_type
+            unset lmsg_content
+            unset lmsg_key
+            unset lvalue
             return 0;
         }
     else 
@@ -80,13 +85,14 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         }
 
         exec_cmd() {
-            local exit_status
+            lexit_status=
             "$@"  # Execute the command passed as arguments
-            exit_status="$?"  # Capture the exit status
-            msg "DEBUG" "Error status is $exit_status"
-            if [ "$exit_status" -ne 0 ]; then
-                err_hdlr "$exit_status"  # Handle the error if the command failed
+            lexit_status="$?"  # Capture the exit status
+            msg "DEBUG" "Error status is $lexit_status"
+            if [ "$lexit_status" -ne 0 ]; then
+                err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
+            unset lexit_status
         }
     fi
 fi
