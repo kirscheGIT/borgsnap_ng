@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 
 # borgsnap - licensed under GPLv3. See the LICENSE file for additional
 # details.
@@ -73,9 +73,46 @@
 
 set -u
 
+if [ -z "${LASTFUNC+x}" ]; then
+    export LASTFUNC=""
+fi
+
+
 export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin"
 export BINDDIR="/run/borgsnap"
 export BORGPATH="borg1" # "borg1" for rsync.net, otherwise "borg" as appropriate
+
+####################################################################################
+# control script messaging/ debugging and error handling
+####################################################################################
+export MSG_DEFINED
+export MSG_LEVEL=5
+export ERR_HDLR_DEFINED
+
+. ./msg_and_err_hdlr.sh
+
+if [ -z "${ERR_HDLR_DEFINED+x}" ]; then
+  die() {
+    echo "$0: $*" >&2
+    exit 1
+  }
+  echo "$0 - No external Error handler found - using simple internal one!"
+  ERR_HDLR_DEFINED=1
+fi
+
+if [ -z "${MSG_DEFINED+x}" ]; then
+    msg() {
+        #########################
+        # disable messaging
+        #########################
+        return 0
+    }
+    echo "$0 - No external message handler script defined - Messaging and Debug messages are disabled"
+    export MSG_DEFINED=1
+fi
+####################################################################################
+
+. ./remote_dir_functions.sh
 
 usage() {
   cat << EOF
@@ -96,12 +133,10 @@ EOF
   exit 1
 }
 
-die() {
-  echo "$0: $*" >&2
-  exit 1
-}
 
-[[ $(id -u) == 0 ]] || die "Must be run as root"
+
+# TODO: Modifiy to check if borg user is used
+[ "$(id -u)" -eq 0 ] || die "Must be run as root"
 
 dow=$(date +"%w")
 dom=$(date +"%d")
@@ -111,60 +146,66 @@ forcemonth=0
 forceweek=0
 
 readconfigfile() {
-  [[ -r $1 ]] || die "Unable to open $1"
-  # shellcheck source=./sample.conf
-  source "$1"
+  LASTFUNC="readconfigfile"
+  [ -r "$1" ] || die "$LASTFUNC: Unable to open $1"
+  msg "DEBUG" "$LASTFUNC: Reading Config File $1"
+  # shellcheck disable=SC1090
+  . "$1"
 
-  BORG_PASSPHRASE=$(< "$PASS")
+  BORG_PASSPHRASE=$(cat "$PASS")
   export BORG_PASSPHRASE
 
-  if [[ -n $RSH ]]; then
-    BORG_RSH=$RSH
+  if [ "$RSH" != "" ]; then
+    BORG_RSH="$RSH"
   else
     BORG_RSH=ssh
   fi
-  echo  "RSH = $BORG_RSH"
+  echo "RSH = $BORG_RSH"
   export BORG_RSH
 
-  [[ -n $BORG_PASSPHRASE ]] || die "Unable to read passphrase from file $PASS"
-  if [[ -n $LOCAL ]]; then
-    [[ -d $LOCAL ]] || die "Non-existent output directory $LOCAL"
+  [ "$BORG_PASSPHRASE" != "" ] || die "Unable to read passphrase from file $PASS"
+  if [ "$LOCAL" != "" ]; then
+    [ -d "$LOCAL" ] || die "Non-existent output directory $LOCAL"
   fi
-  scriptpath="$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )"
+  scriptpath="$(cd -- "$(dirname "$0")" >/dev/null 2>&1; pwd -P)"
   echo "scriptpath is $scriptpath/$PRE_SCRIPT"
-  if [[ -n $PRE_SCRIPT ]]; then
-    [[ -f $PRE_SCRIPT ]] || die "PRE_SCRIPT specified but could not be found: $PRE_SCRIPT"
-    [[ -x $PRE_SCRIPT ]] || die "PRE_SCRIPT specified but could not be executed (run command: chmod +x $PRE_SCRIPT)"
+  if [ "$PRE_SCRIPT" != "" ]; then
+    [ -f "$PRE_SCRIPT" ] || die "PRE_SCRIPT specified but could not be found: $PRE_SCRIPT"
+    [ -x "$PRE_SCRIPT" ] || die "PRE_SCRIPT specified but could not be executed (run command: chmod +x $PRE_SCRIPT)"
   fi
 
-  if [[ -n $POST_SCRIPT ]]; then
-    [[ -f $POST_SCRIPT ]] || die "POST_SCRIPT specified but could not be found: $POST_SCRIPT"
-    [[ -x $POST_SCRIPT ]] || die "POST_SCRIPT specified but could not be executed (run command: chmod +x $POST_SCRIPT)"
+  if [ "$POST_SCRIPT" != "" ]; then
+    [ -f "$POST_SCRIPT" ] || die "POST_SCRIPT specified but could not be found: $POST_SCRIPT"
+    [ -x "$POST_SCRIPT" ] || die "POST_SCRIPT specified but could not be executed (run command: chmod +x $POST_SCRIPT)"
   fi
 
-  if [[ -n $BASEDIR ]]; then
-    if [[ -d $BASEDIR ]]; then
-      BORG_BASE_DIR=$BASEDIR
+  if [ "$BASEDIR" != "" ]; then
+    if [ -d "$BASEDIR" ]; then
+      BORG_BASE_DIR="$BASEDIR"
       export BORG_BASE_DIR
       echo "Borgbackup basedir set to $BORG_BASE_DIR"
     else
-      die "Non-existant BASEDIR $BASEDIR"
+      die "Non-existent BASEDIR $BASEDIR"
     fi
   fi
-  if [[ ! -n $CACHEMODE ]]; then
+  if [ "$CACHEMODE" = "" ]; then
     export CACHEMODE="ctime,size,inode"
     echo "CACHEMODE not configured, defaulting to ctime,size,inode"
   else
     echo "CACHEMODE set to $CACHEMODE"
     export CACHEMODE
   fi
-  if [[ ! -n $REMOTE_BORG_COMMAND ]]; then
+  if [ "$REMOTE_BORG_COMMAND" = "" ]; then
     export BORGPATH="borg1"
     echo "REMOTE_BORG_COMMAND not configured, defaulting to $BORGPATH (for rsync.net)"
   else
-    export BORGPATH=$REMOTE_BORG_COMMAND
+    export BORGPATH="$REMOTE_BORG_COMMAND"
     echo "REMOTE_BORG_COMMAND set to $BORGPATH"
   fi
+
+  export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
+  export REMOTEDIRPSX="$REMOTE_DIR_PSX"
+
 }
 
 findlast() {
@@ -179,32 +220,41 @@ snapshot() {
   set +e
   SNAPSHOTEXISTS="$(zfs list -t snapshot | grep "${1}@${2}")" 
   echo "$SNAPSHOTEXISTS"
-  if [[ ! -n $SNAPSHOTEXISTS ]]; then
+  if [ "$SNAPSHOTEXISTS" = "" ]; then
     set -e
-    if [ "$RECURSIVE" = true ]; then
+    if [ "$RECURSIVE" = "true" ]; then
       echo "Recursive snapshot ${1}@${2}"
       zfs snapshot -r "${1}@${2}"
     else
       echo "Snapshot ${1}@${2}"
       zfs snapshot "${1}@${2}"
     fi
-    # Sometimes it seems to take some time?
-    sleep 5
+      # Check if the snapshot operation is still running
+    while pgrep -f "zfs snapshot" > /dev/null; do
+        echo "Waiting for the snapshot operation to complete..."
+        sleep 5  #Sleep for a short time before checking again
+    done
   else
     echo "Snapshot ${1}@${2} exists. Assuming last run did not finish - restarting borg"
   fi
 }
 
 destroysnapshot() {
-  if [ "$RECURSIVE" = true ]; then
+  if [ "$RECURSIVE" = "true" ]; then
     echo "Recursive snapshot ${1}@${2}"
     zfs destroy -r "${1}@${2}"
   else
     echo "Snapshot ${1}@${2}"
     zfs destroy "${1}@${2}"
   fi
-  # Sometimes it seems to take some time?
-  sleep 5
+
+  # Check if the destroy operation is still running
+  while pgrep -f "zfs destroy" > /dev/null; do
+    echo "Waiting for the destroy operation to complete..."
+    sleep 5  #Sleep for a short time before checking again
+  done
+
+  echo "Destroy operation has completed."
 }
 
 
@@ -213,76 +263,25 @@ recursivezfsmount() {
   # $2 - snapshot label
   # Expects $bind_dir
 
-  for R in `zfs list -Hr -t snapshot -o name $1|grep "@$2$"|sed -e "s@^$1@@" -e "s/@$2$//"`; do
-    echo Mounting child filesystem snapshot: "$1$R@$2"
+  for R in $(zfs list -Hr -t snapshot -o name "$1" | grep "@$2$" | sed -e "s@^$1@@" -e "s/@$2$//"); do
+    echo "Mounting child filesystem snapshot: $1$R@$2"
     mkdir -p "$bind_dir$R"
     mount -t zfs "$1$R@$2" "$bind_dir$R"
   done
 }
-
 recursivezfsumount() {
   # $1 - volume, pool/dataset
   # $2 - snapshot label
   # Expects $bind_dir
 
-  for R in `zfs list -Hr -t snapshot -o name $1|grep "@$2$"|sed -e "s@^$1@@" -e "s/@$2$//"|tac`; do
-	echo Unmounting child filesystem snapshot: "$bind_dir$R"
+  for R in $(zfs list -Hr -t snapshot -o name "$1" | grep "@$2$" | sed -e "s@^$1@@" -e "s/@$2$//" | tac); do
+    echo "Unmounting child filesystem snapshot: $bind_dir$R"
     umount "$bind_dir$R"
   done
 }
 
-checkdirexists() {
-  # $1 - remote directory
-  echo "Check if Remote Dir exists"
-  if [[ $WITH_PORT == true ]]; then
-    stripped_remote=${REMOTE/"ssh://"/}
-    echo "Striped Remote = $stripped_remote"
-    host=${stripped_remote%%:*}
-    echo "Host = $host"
-    dir=${stripped_remote#*/}
-    echo "dir = $dir"
-    port_semi=${stripped_remote#*:}
-    echo "port_semi = $port_semi"
-    port=${port_semi%%/*} && [[ -n $port ]] || port=22
-    echo "port = $port"
-  else
-    host=${REMOTE%:*}
-    dir=${REMOTE#*:}
-  fi
-  set +e
-  # set -x
-  if [[ $REMOTE_DIR_METHOD == "sftp" ]]; then
-    echo "cd $dir/$dataset" | sftp -b - -P $port "-oidentityfile="${BORG_RSH/"ssh -i "/} "$host"
-  else
-     $RSH '[ -d $dir/$dataset ]'
-     echo "Test Dir"	
-#    ssh -p $port "$host" test -d "$dir/$dataset"
-  fi
-}
 
-createdir() {
-  # $1 - remote directory
-  set +e
-  if [[ $WITH_PORT == true ]]; then
-    stripped_remote=${REMOTE/"ssh://"/}
-    host=${stripped_remote%%:*}
-    dir=${stripped_remote#*/}
-    port_semi=${stripped_remote#*:}
-    port=${port_semi%%/*} && [[ -n $port ]] || port=22
-  else
-    host=${REMOTE%:*}
-    dir=${REMOTE#*:}
-  fi
-  set -e
-  # just for temproryr reasons we use "sftps"
-  if [[ $REMOTE_DIR_METHOD == "sftps" ]]; then
-    echo "mkdir -p $dir/$dataset" | sftp -b - -P $port ${BORG_RSH#ssh} "$host"
-  else
-    identity_file=${BORG_RSH/"ssh -i "/}
-    ssh -p $port -i "$identity_file" "$host" mkdir -p "$dir/$dataset"
-  fi
 
-}
 
 dobackup() {
   # $1 - volume, i.e. zroot/home
@@ -293,26 +292,28 @@ dobackup() {
   bind_dir="${BINDDIR}/${1}"
   mkdir -p "$bind_dir"
   mount -t zfs "${1}@${2}" "$bind_dir"
-  if [ "$RECURSIVE" = true ]; then
-    recursivezfsmount $1 $2
+  if [ "$RECURSIVE" = "true" ]; then
+    recursivezfsmount "$1" "$2"
   fi
   BORG_OPTS="--info --stats --compression $COMPRESS --files-cache $CACHEMODE --exclude-if-present .noborg"
-  if [[ -n $localdir && "$LOCALSKIP" != true ]]; then
+  if [ "$localdir" != "" ] && [ "$LOCALSKIP" != "true" ]; then
     echo "Doing local backup of ${1}@${2}"
+    # shellcheck disable=SC2086
     borg create $BORG_OPTS "${localdir}::${2}" "$bind_dir"
-    if [ ${LOCAL_READABLE_BY_OTHERS} ]; then
+    if [ "$LOCAL_READABLE_BY_OTHERS" = "true" ]; then
       echo "Set read permissions for others"
       chmod +rx "${localdir}" -R
     fi
   else
     echo "Skipping local backup"
   fi
-  if [[ -n $remotedir ]]; then
+  if [ "$remotedir" != "" ]; then
     echo "Doing remote backup of ${1}@${2}"
-    borg create $BORG_OPTS --remote-path=${BORGPATH} "${remotedir}::${2}" "$bind_dir"
+    # shellcheck disable=SC2086
+    borg create $BORG_OPTS --remote-path="${BORGPATH}" "${remotedir}::${2}" "$bind_dir"
   fi
-  if [ "$RECURSIVE" = true ]; then
-    recursivezfsumount $1 $2
+  if [ "$RECURSIVE" = "true" ]; then
+    recursivezfsumount "$1" "$2"
   fi
 
   umount -n "$bind_dir"
@@ -325,89 +326,93 @@ purgeold() {
   # Expects localdir, remotedir
 
   echo "------ $(date) ------"
-  total=$(wc -l <<<"$(findall "$1" "$2")")
+  total=$(findall "$1" "$2" | wc -l)
 
-  if [[ $total -le $3 ]]; then
+  if [ "$total" -le "$3" ]; then
     echo "No old backups to purge"
   else
-    delete=$((total-$3))
+    delete=$((total - $3))
     echo "Keep: $3, found: $total, will delete $delete"
-    for i in $(tail -n $delete <<<"$(findall "$1" "$2")"); do
+    for i in $(findall "$1" "$2" | tail -n "$delete"); do
       echo "Purging old snapshot $i"
       zfs destroy -r "$i"
     done
     BORG_OPTS="--info --stats --keep-daily=$DAILY_KEEP --keep-weekly=$WEEKLY_KEEP --keep-monthly=$MONTHLY_KEEP"
-    if [[ -n $localdir && "$LOCALSKIP" != true ]]; then
+    if [ "$localdir" != "" ] && [ "$LOCALSKIP" != true ]; then
       echo "Pruning local borg"
+      # shellcheck disable=SC2086
       borg prune $BORG_OPTS "$localdir"
     fi
-    if [[ -n $remotedir ]]; then
+    if [ "$remotedir" != "" ]; then
       echo "Pruning remote borg"
-      borg prune $BORG_OPTS --remote-path=${BORGPATH} "$remotedir"
+      # shellcheck disable=SC2086
+      borg prune $BORG_OPTS --remote-path="${BORGPATH}" "$remotedir"
     fi
   fi
 }
 
 runBackup() {
-  [[ $# == 1 ]] && readconfigfile $1 || usage
+  if [ "$#" -eq 1 ]; then
+    readconfigfile "$1"
+  else
+    usage
+  fi
 
   echo "====== $(date) ======"
   for i in $FS; do
     dataset=${i}
-    if [[ -n $LOCAL ]]; then
-      localdir="$LOCAL/$dataset"
-    else
-      localdir=""
-    fi
-    if [[ -n $REMOTE ]]; then
-      remotedir="$REMOTE/$dataset"
-    else
-      remotedir=""
-    fi
+    localdir="${LOCAL:+$LOCAL/$dataset}"
+    remotedir="${REMOTE:+$REMOTE/$dataset}"
 
     echo "Processing $dataset"
-
-    if [[ -n $localdir && ! -d $localdir && "$LOCALSKIP" != true ]]; then
+    echo "remotedir is $remotedir"
+    if [ "$localdir" != "" ] && [ ! -d "$localdir" ] && [ "$LOCALSKIP" != true ]; then
       echo "Initializing borg $localdir"
       mkdir -p "$localdir"
       borg init --encryption=repokey "$localdir"
     fi
-    if [[ -n $remotedir ]]; then
-      checkdirexists $remotedir
-      if [[ $? == 1 ]]; then
+    if [ "$remotedir" != "" ]; then
+      #checkdirexists "$remotedir"
+      #checkdirexists "$REMOTE" "$dataset"
+      remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+      if [ $? -eq 1 ]; then
         set -e
         echo "Initializing remote $remotedir"
-        createdir $remotedir
-        borg init --encryption=repokey --remote-path=${BORGPATH} "$remotedir"
+        
+        #createdir "$remotedir"
+        remotedircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+        #temp disabled for debug purposes
+        borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
+        exit 0
       fi
       set -e
     fi
 
     lastmonthly=$(findlast "$i" monthly)
-    if [[ -z $lastmonthly ]]; then
+    if [ "$lastmonthly" = "" ]; then
       forcemonth=1
     fi
 
     lastweekly=$(findlast "$i" weekly)
-    if [[ -z $lastweekly ]]; then
+    if [ "$lastweekly" = "" ]; then
       forceweek=1
     fi
 
-    if [[ -n $PRE_SCRIPT ]]; then
+    if [ "$PRE_SCRIPT" != "" ]; then
       echo "====== $(date) ======"
       echo "Executing pre-snapshot script: $PRE_SCRIPT"
-      if [[ -x $PRE_SCRIPT ]]; then
-        $PRE_SCRIPT $i
-	sleep 3
+      if [ -x "$PRE_SCRIPT" ]; then
+        "$PRE_SCRIPT" "$i"
+        sleep 3
       fi
-    fi      	    
+    fi
 
-    if [[ $forcemonth == 1 || $dom -eq 1 ]]; then
+    if [ "$forcemonth" = 1 ] || [ "$dom" -eq 1 ]; then
       label="monthly-$date"
       snapshot "$i" "$label"
       dobackup "$i" "$label"
       purgeold "$i" monthly "$MONTHLY_KEEP"
-    elif [[ $forceweek == 1 || $dow -eq 0 ]]; then
+    elif [ "$forceweek" = 1 ] || [ "$dow" -eq 0 ]; then
       label="weekly-$date"
       snapshot "$i" "$label"
       dobackup "$i" "$label"
@@ -419,11 +424,11 @@ runBackup() {
       purgeold "$i" daily "$DAILY_KEEP"
     fi
 
-    if [[ -n $POST_SCRIPT ]]; then
+    if [ "$POST_SCRIPT" != "" ]; then
       echo "====== $(date) ======"
-      echo "Executing post-snapshot script: $POST_SCRIPT"      
-      if [[ -x $POST_SCRIPT ]]; then
-        $POST_SCRIPT $i
+      echo "Executing post-snapshot script: $POST_SCRIPT"
+      if [ -x "$POST_SCRIPT" ]; then
+        "$POST_SCRIPT" "$i"
       fi
     fi
   done
@@ -433,16 +438,20 @@ runBackup() {
 }
 
 backupSnapshot() {
-  [[ $# == 2 ]] && readconfigfile $1 || usage
+  if [ "$#" -eq 2 ]; then
+    readconfigfile "$1"
+  else
+    usage
+  fi
 
   for i in $FS; do
     dataset=${i}
-    if [[ -n $LOCAL ]]; then
+    if [ "$LOCAL" != "" ]; then
       localdir="$LOCAL/$dataset"
     else
       localdir=""
     fi
-    if [[ -n $REMOTE ]]; then
+    if [ "$REMOTE" != "" ]; then
       remotedir="$REMOTE/$dataset"
     else
       remotedir=""
@@ -450,18 +459,18 @@ backupSnapshot() {
 
     echo "Processing $dataset"
 
-    if [[ -n $localdir && ! -d $localdir ]]; then
+    if [ "$localdir" != "" ] && [ ! -d "$localdir" ]; then
       echo "Initializing borg $localdir"
       mkdir -p "$localdir"
       borg init --encryption=repokey "$localdir"
     fi
-    if [[ -n $remotedir ]]; then
-    checkdirexists $remotedir
-      if [[ $? == 1 ]]; then
+    if [ "$remotedir" != "" ]; then
+      remotedirexists "$remotedir"
+      if [ $? -eq 1 ]; then
         set -e
         echo "Initializing remote $remotedir"
-        createdir $remotedir
-        borg init --encryption=repokey --remote-path=${BORGPATH} "$remotedir"
+        remotedircreate "$remotedir"
+        borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
       fi
       set -e
     fi
@@ -480,82 +489,104 @@ tidybackup() {
 
   echo "------ $(date) ------"
   bind_dir="${BINDDIR}/${1}"
-  if [[ -n $LOCAL ]]; then
+  if [ "$LOCAL" != "" ]; then
     localdir="$LOCAL/$dataset"
   else
     localdir=""
   fi
-  if [[ -n $REMOTE ]]; then
+  if [ "$REMOTE" != "" ]; then
     remotedir="$REMOTE/$dataset"
   else
     remotedir=""
   fi
   mkdir -p "$bind_dir"
   BORG_OPTS="--info --stats"
-  if [[ -n $localdir && $LOCALSKIP != true ]]; then
+  if [ "$localdir" != "" ] && [ "$LOCALSKIP" != true ]; then
     echo "Deleting local backup of ${1}@${2}"
+    # shellcheck disable=SC2086
     borg delete $BORG_OPTS "${localdir}::${2}" 
-    if [ ${LOCAL_READABLE_BY_OTHERS} ]; then
+    if [ "$LOCAL_READABLE_BY_OTHERS" ]; then
       echo "Set read permissions for others"
       chmod +rx "${localdir}" -R
     fi
   fi
 
-  if [[ -n $remotedir ]]; then
+  if [ "$remotedir" != "" ]; then
     echo "Deleting remote backup of ${1}@${2}"
-    borg delete $BORG_OPTS --remote-path=${BORGPATH} $BORG_OPTS "$remotedir::${2}"
+    # shellcheck disable=SC2086
+    borg delete $BORG_OPTS --remote-path="${BORGPATH}" "$remotedir::${2}"
   fi
 }
 
 tidyUp() {
-  [[ $# == 1 ]] && readconfigfile $1 || usage
+  if [ "$#" -eq 1 ]; then
+    readconfigfile "$1"
+  else
+    usage
+  fi
+
   echo "====== $(date) ======"
   echo "Unmounting snapshots"
-  for f in $(mount | grep ' on /run/borgsnap/' | sed 's/^.* on //' | sed 's/\ type zfs.*//' | tail -r)
-  do
-    umount $f
+  
+  # Unmounting snapshots in reverse order
+  mount | grep ' on /run/borgsnap/' | sed 's/^.* on //' | sed 's/\ type zfs.*//' | awk '{ lines[NR] = $0 } END { for (i = NR; i > 0; i--) print lines[i] }' | while read -r f; do
+    umount "$f"
   done
-  echo "Removing todays snapshots/backups"
+
+  echo "Removing today's snapshots/backups"
   for i in $FS; do
     dataset=${i}
     lastmonthly=$(findlast "$i" monthly)
-    if [[ -z $lastmonthly ]]; then
+    if [ "$lastmonthly" = "" ]; then
       forcemonth=1
     fi
 
     lastweekly=$(findlast "$i" weekly)
-    if [[ -z $lastweekly ]]; then
+    if [ "$lastweekly" = "" ]; then
       forceweek=1
     fi
 
-    if [[ $forcemonth == 1 || $dom -eq 1 ]]; then
+    if [ "$forcemonth" = 1 ] || [ "$dom" -eq 1 ]; then
       label="monthly-$date"
       destroysnapshot "$i" "$label"
-	  tidybackup "$i" "$label"
-    elif [[ $forceweek == 1 || $dow -eq 0 ]]; then
+      tidybackup "$i" "$label"
+    elif [ "$forceweek" = 1 ] || [ "$dow" -eq 0 ]; then
       label="weekly-$date"
       destroysnapshot "$i" "$label"
-	  tidybackup "$i" "$label"
+      tidybackup "$i" "$label"
     else
       label="daily-$date"
       destroysnapshot "$i" "$label"
-	  tidybackup "$i" "$label"
+      tidybackup "$i" "$label"
     fi
   done
+
   echo "Tidy Done $(date)"
 }
 
-if [ $# -eq 0 ]; then
+
+
+# Main script execution
+if [ "$#" -eq 0 ]; then
   usage
+  # shellcheck disable=SC2317
   exit
 fi
 
 case "$1" in
-  run) runBackup "${@:2}";;
-  snap) backupSnapshot "${@:2}";;
-  tidy) tidyUp "${@:2}";;
-  -h) usage;;
-  *) echo "$1 is an unknown command!" && usage;;
+  run)
+    shift  # Remove the first argument
+    runBackup "$@";;
+  snap)
+    shift  # Remove the first argument
+    backupSnapshot "$@";;
+  tidy)
+    shift  # Remove the first argument
+    tidyUp "$@";;
+  -h)
+    usage;;
+  *)
+    echo "$1 is an unknown command!" && usage;;
 esac
 
 exit
