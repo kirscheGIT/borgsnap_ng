@@ -37,7 +37,7 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         fi
         printf "msg_and_err_hdlr.sh: Message handler is enabled with message level - %s - \n" "$MSG_LEVEL"
         msg() {
-            local lcalling_function="$LASTFUNC"
+            lcalling_function="$LASTFUNC"
             LASTFUNC="msg"
             if [ "$#" -eq 1 ]; then
                 printf "%s\n" "$1"
