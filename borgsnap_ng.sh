@@ -533,3 +533,15 @@ case "$1" in
 esac
 
 exit
+
+# TODO: Change the IFS and trim whitespaces
+# # Original IFS value
+# OLD_IFS="$IFS"
+# Set IFS to semicolon
+# IFS=';'
+# for i in $FS; do
+#    trimmed=$(echo "$i" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+#    echo '$trimmed'"
+# done
+## Reset IFS to its original value
+# IFS="$OLD_IFS"
