@@ -18,7 +18,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
 
     readconfigfile() {
         LASTFUNC="readconfigfile"
-        lconfigfile="$1"
+        local lconfigfile="$1"
 
         [ -r "$lconfigfile" ] || die "$LASTFUNC: Unable to open $lconfigfile"
         msg "DEBUG" "$LASTFUNC: Reading Config File $lconfigfile"
@@ -79,7 +79,6 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
         export REMOTEDIRPSX="$REMOTE_DIR_PSX"
 
-        unset lconfigfile
 
         }
 fi

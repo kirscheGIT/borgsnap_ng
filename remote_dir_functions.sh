@@ -41,10 +41,10 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
 
     remotedirexists(){
         LASTFUNC="remotedirexists"
-        lremotessh="$1"
-        lremotedir="$2"
-        ldataset="$3"
-        lcheckpath=""
+        local lremotessh="$1"
+        local lremotedir="$2"
+        local ldataset="$3"
+        local lcheckpath=""
 
         msg "DEBUG" "Remote dir is $lremotedir"
         msg "DEBUG" "Dataset dir is $ldataset"
@@ -53,20 +53,10 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         if ssh "$lremotessh" 'ls '"$lcheckpath" > /dev/null 2>&1; then
             msg "INFO" "remotedir - $lremotedir - and dataset - $ldataset - exist"
             set +x
-            unset lremotessh
-            unset lremotedir
-            unset ldataset
-            unset lcheckpath
-
             return 0
         else
             msg "INFO" "Directory $lcheckpath doesn't exist"
             set +x
-            unset lremotessh
-            unset lremotedir
-            unset ldataset
-            unset lcheckpath
-
             return 1
         fi
     }
@@ -75,10 +65,10 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # $1 - remote directory
         set +e
         LASTFUNC="remotedircreate"
-        lremotessh="$1"
-        lremotedir="$2"
-        ldataset="$3"
-        lcreatepath=""
+        local lremotessh="$1"
+        local lremotedir="$2"
+        local ldataset="$3"
+        local lcreatepath=""
 
         msg "DEBUG" "Remote dir is $lremotedir"
         msg "DEBUG" "Dataset dir is $ldataset"
@@ -86,10 +76,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         msg "INFO" "Creating Path at remote path $lcreatepath"
         # when the ssh mkdir fails, we need the error handler
         exec_cmd ssh "$lremotessh" 'mkdir -p '"$lcreatepath"
-        unset lremotessh
-        unset lremotedir
-        unset ldataset
-        unset lcreatepath
+
         return 0
     }
 fi
