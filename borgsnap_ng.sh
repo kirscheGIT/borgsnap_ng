@@ -136,7 +136,10 @@ EOF
 
 
 # TODO: Modifiy to check if borg user is used
-[ "$(id -u)" -eq 0 ] || die "Must be run as root"
+#[ "$(id -u)" -eq 0 ] || die "Must be run as root"
+[ "$(id -un)" = "root" ] || die "Must be run as root"
+# username=$(id -un)
+# msg "$username"
 
 dow=$(date +"%w")
 dom=$(date +"%d")
