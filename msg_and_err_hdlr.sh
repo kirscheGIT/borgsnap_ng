@@ -43,10 +43,10 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
                 printf "%s\n" "$1"
 
             elif [ "$#" -eq 2 ]; then
-                local lmsg_type="$1"
-                local lmsg_content="$2"
-                local lmsg_key=
-                local lvalue=
+                lmsg_type="$1"
+                lmsg_content="$2"
+                lmsg_key=
+                lvalue=
 
                 lvalue=$(eval "echo \$${lmsg_type##*[!0-9_a-z_A-Z]*}" 2>/dev/null)
             
@@ -62,6 +62,11 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
                 printf "USAGE ERROR: msg() function - Too many parameters.  max. 2 parameters alowed. Instead %i parameters were provided: %s\n" "$#" "$*"
             fi
             LASTFUNC="$lcalling_function"
+            unset lcalling_function
+            unset lmsg_type
+            unset lmsg_content
+            unset lmsg_key
+            unset lvalue
             return 0;
         }
     else 
