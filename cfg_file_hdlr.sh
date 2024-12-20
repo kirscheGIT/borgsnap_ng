@@ -29,8 +29,11 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
     readconfigfile() {
         LASTFUNC="readconfigfile"
         lconfigfile="$1"
-        
-
+       
+       # msg "DEBUG" "Jetzt rufen wir mal das Script auf!!!"
+       # exec_cmd "/root/git/conf_bak/test_folder/local_var_test2.sh"
+       
+       
         [ -r "$lconfigfile" ] || die "$LASTFUNC: Unable to open $lconfigfile"
         msg "DEBUG" "$LASTFUNC: Reading Config File $lconfigfile"
         # shellcheck disable=SC1090
@@ -48,8 +51,8 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         if [ "$LOCAL" != "" ]; then
             [ -d "$LOCAL" ] || die "Non-existent output directory $LOCAL"
         fi
-
-        scriptpath="$(cd -- "$(dirname "$0")" >/dev/null 2>&1; pwd -P)"
+        
+        scriptpath="$(cd -- "$(dirname "$0")" >/dev/null 2>&1 || exit; pwd -P)"
         msg "INFO" "$LASTFUNC: scriptpath is $scriptpath/$PRE_SCRIPT"
         if [ "$PRE_SCRIPT" != "" ]; then
             [ -f "$PRE_SCRIPT" ] || die "PRE_SCRIPT specified but could not be found: $PRE_SCRIPT"
@@ -86,7 +89,10 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         fi
 
         export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
+        msg "DEBUG" "Remote ssh config is: $REMOTESSHCONFIG"
         export REMOTEDIRPSX="$REMOTE_DIR_PSX"
+
+        # TODO: Check $FS variable if empty
 
         unset lconfigfile
 

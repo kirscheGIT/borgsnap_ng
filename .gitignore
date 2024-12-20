@@ -6,3 +6,4 @@ server*.conf
 *.key
 test*
 UNSORTED_INFO.md
+test_dir.sh

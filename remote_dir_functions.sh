@@ -31,12 +31,23 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         lremotedir="$2"
         ldataset="$3"
         lcheckpath=""
+        lchkcmd=""
+
+        if [ -z "$lremotessh" ]; then
+            lchkcmd="ls ";
+        else
+            lchkcmd="ssh $lremotessh ls"; 
+        fi
 
         msg "DEBUG" "Remote dir is $lremotedir"
         msg "DEBUG" "Dataset dir is $ldataset"
-        lcheckpath="$lremotedir$ldataset"
+        msg "DEBUG" "Checkpath is $lchkcmd"
+        #lcheckpath="/$lremotedir/$ldataset"
+        lcheckpath="/""$lremotedir""/""$ldataset"
         msg "DEBUG" "Remote path to check is $lcheckpath"
-        if ssh "$lremotessh" 'ls '"$lcheckpath" > /dev/null 2>&1; then
+        msg "$lchkcmd$lcheckpath"
+        #exec_cmd $lchkcmd$lcheckpath
+        if  $lchkcmd "$lcheckpath" > /dev/null 2>&1; then
             msg "INFO" "remotedir - $lremotedir - and dataset - $ldataset - exist"
             set +x
             unset lremotessh
@@ -68,7 +79,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
 
         msg "DEBUG" "Remote dir is $lremotedir"
         msg "DEBUG" "Dataset dir is $ldataset"
-        lcreatepath="$lremotedir$ldataset"
+        lcreatepath="/$lremotedir/$ldataset"
         msg "INFO" "Creating Path at remote path $lcreatepath"
         # when the ssh mkdir fails, we need the error handler
         exec_cmd ssh "$lremotessh" 'mkdir -p '"$lcreatepath"

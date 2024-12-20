@@ -115,6 +115,8 @@ fi
 . ./remote_dir_functions.sh
 . ./cfg_file_hdlr.sh
 
+msg "DEBUG" "$PATH"
+
 usage() {
   cat << EOF
 
@@ -230,11 +232,12 @@ dobackup() {
   # $1 - volume, i.e. zroot/home
   # $2 - label, i.e. monthly-20170602
   # Expects localdir, remotedir, BINDDIR
-
-  echo "------ $(date) ------"
+  LASTFUNC="dobackup"
+  msg "------ $(date) ------"
   bind_dir="${BINDDIR}/${1}"
-  mkdir -p "$bind_dir"
-  mount -t zfs "${1}@${2}" "$bind_dir"
+  exec_cmd mkdir -p "$bind_dir"
+  msg "DEBUG" "bind_dir is: $bind_dir" 
+  exec_cmd mount -t zfs "${1}@${2}" "$bind_dir"
   if [ "$RECURSIVE" = "true" ]; then
     recursivezfsmount "$1" "$2"
   fi
@@ -248,7 +251,7 @@ dobackup() {
       chmod +rx "${localdir}" -R
     fi
   else
-    echo "Skipping local backup"
+    msg "INFO" "Skipping local backup"
   fi
   if [ "$remotedir" != "" ]; then
     echo "Doing remote backup of ${1}@${2}"
@@ -303,12 +306,13 @@ runBackup() {
 
   echo "====== $(date) ======"
   for i in $FS; do
-    dataset=${i}
+    dataset="$i"
     localdir="${LOCAL:+$LOCAL/$dataset}"
-    remotedir="${REMOTE:+$REMOTE/$dataset}"
+    #remotedir="${REMOTE:+$REMOTE/$dataset}"
+    remotedir="${REMOTESSHCONFIG:+"ssh://"$REMOTESSHCONFIG/$REMOTEDIRPSX/$dataset}"
 
-    echo "Processing $dataset"
-    echo "remotedir is $remotedir"
+    msg "INFO" "Processing $dataset"
+    msg "INFO" "remotedir is $remotedir"
     if [ "$localdir" != "" ] && [ ! -d "$localdir" ] && [ "$LOCALSKIP" != true ]; then
       echo "Initializing borg $localdir"
       mkdir -p "$localdir"
@@ -317,16 +321,17 @@ runBackup() {
     if [ "$remotedir" != "" ]; then
       #checkdirexists "$remotedir"
       #checkdirexists "$REMOTE" "$dataset"
-      remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
-      if [ $? -eq 1 ]; then
+      #remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+      # if [ $? -eq 1 ]; then
+      if ! remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"; then
         set -e
         echo "Initializing remote $remotedir"
         
         #createdir "$remotedir"
         remotedircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
         #temp disabled for debug purposes
-        borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
         exit 0
+     #   borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
       fi
       set -e
     fi
@@ -400,7 +405,7 @@ backupSnapshot() {
       remotedir=""
     fi
 
-    echo "Processing $dataset"
+    msg "INFO" "backupsnapshot() Processing $dataset"
 
     if [ "$localdir" != "" ] && [ ! -d "$localdir" ]; then
       echo "Initializing borg $localdir"
@@ -533,7 +538,7 @@ case "$1" in
 esac
 
 exit
-
+# TODO: readconfigfile before backup run?
 # TODO: Change the IFS and trim whitespaces
 # # Original IFS value
 # OLD_IFS="$IFS"
