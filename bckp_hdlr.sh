@@ -41,11 +41,11 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 exec_cmd borg init --encryption=repokey "$localdir"
             fi
             if [ "$remotedir" != "" ]; then
-                #remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
-                if remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"; then
+                #direxists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+                if direxists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"; then
                     set -e
                     msg "INFO" "Initializing remote $remotedir"
-                    remotedircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+                    dircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
                     exec_cmd borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
                     
                 fi

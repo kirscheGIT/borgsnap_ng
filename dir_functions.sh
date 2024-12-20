@@ -1,5 +1,5 @@
 #!/bin/sh
-# remote_dir_functions.sh is part of borgsnap_ng - licensed under GPLv3. See the LICENSE file for additional
+# dir_functions.sh is part of borgsnap_ng - licensed under GPLv3. See the LICENSE file for additional
 # details.
 
 # shellcheck disable=SC3043
@@ -25,8 +25,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
 
     msg "DEBUG" "sourced checkdirexists.sh"
 
-    remotedirexists(){
-        LASTFUNC="remotedirexists"
+    direxists(){
+        LASTFUNC="direxists"
         lremotessh="$1"
         lremotedir="$2"
         ldataset="$3"
@@ -54,7 +54,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset lremotedir
             unset ldataset
             unset lcheckpath
-
+            unset lchkcmd
             return 0
         else
             msg "INFO" "Directory $lcheckpath doesn't exist"
@@ -63,27 +63,35 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset lremotedir
             unset ldataset
             unset lcheckpath
-
+            unset lchkcmd
             return 1
         fi
     }
     
-    remotedircreate() {
+    dircreate() {
         # $1 - remote directory
         set +e
-        LASTFUNC="remotedircreate"
+        LASTFUNC="dircreate"
         lremotessh="$1"
         lremotedir="$2"
         ldataset="$3"
         lcreatepath=""
+        lmkpath=""
+
+        if [ -z "$lremotessh" ]; then
+            lmkpath="mkdir -p";
+        else
+            lmkpath="ssh $lremotessh mkdir -p"; 
+        fi
 
         msg "DEBUG" "Remote dir is $lremotedir"
         msg "DEBUG" "Dataset dir is $ldataset"
         lcreatepath="/$lremotedir/$ldataset"
         msg "INFO" "Creating Path at remote path $lcreatepath"
         # when the ssh mkdir fails, we need the error handler
-        exec_cmd ssh "$lremotessh" 'mkdir -p '"$lcreatepath"
+        exec_cmd $lmkpath "$lcreatepath"
 
+        unset lmkpath
         unset lremotessh
         unset lremotedir
         unset ldataset

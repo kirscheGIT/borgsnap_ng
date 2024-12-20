@@ -112,7 +112,7 @@ if [ -z "${MSG_DEFINED+x}" ]; then
 fi
 ####################################################################################
 
-. ./remote_dir_functions.sh
+. ./dir_functions.sh
 . ./cfg_file_hdlr.sh
 
 msg "DEBUG" "$PATH"
@@ -321,14 +321,14 @@ runBackup() {
     if [ "$remotedir" != "" ]; then
       #checkdirexists "$remotedir"
       #checkdirexists "$REMOTE" "$dataset"
-      #remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+      #direxists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
       # if [ $? -eq 1 ]; then
-      if ! remotedirexists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"; then
+      if ! direxists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"; then
         set -e
         echo "Initializing remote $remotedir"
         
         #createdir "$remotedir"
-        remotedircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
+        dircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
         #temp disabled for debug purposes
         exit 0
      #   borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
@@ -413,11 +413,11 @@ backupSnapshot() {
       borg init --encryption=repokey "$localdir"
     fi
     if [ "$remotedir" != "" ]; then
-      remotedirexists "$remotedir"
+      direxists "$remotedir"
       if [ $? -eq 1 ]; then
         set -e
         echo "Initializing remote $remotedir"
-        remotedircreate "$remotedir"
+        dircreate "$remotedir"
         borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
       fi
       set -e
