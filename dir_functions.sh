@@ -26,76 +26,104 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     msg "DEBUG" "sourced checkdirexists.sh"
 
     direxists(){
+        # $1 - target directory to be created
+        # Strings that work are:
+        # for local directories at exampel /tmp/test
+        # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="direxists"
-        lremotessh="$1"
-        lremotedir="$2"
-        ldataset="$3"
-        lcheckpath=""
+        ltestdir="$1"
+        lremotessh=""
+        lchkpath=""
         lchkcmd=""
 
-        if [ -z "$lremotessh" ]; then
-            lchkcmd="ls ";
-        else
-            lchkcmd="ssh $lremotessh ls"; 
+        if [ -z "$ltestdir" ]; then
+            msg "ERROR" "Empty directory string was given!"
+            return 2
         fi
 
-        msg "DEBUG" "Remote dir is $lremotedir"
-        msg "DEBUG" "Dataset dir is $ldataset"
-        msg "DEBUG" "Checkpath is $lchkcmd"
-        #lcheckpath="/$lremotedir/$ldataset"
-        lcheckpath="/""$lremotedir""/""$ldataset"
-        msg "DEBUG" "Remote path to check is $lcheckpath"
-        msg "$lchkcmd$lcheckpath"
-        #exec_cmd $lchkcmd$lcheckpath
-        if  $lchkcmd "$lcheckpath" > /dev/null 2>&1; then
-            msg "INFO" "remotedir - $lremotedir - and dataset - $ldataset - exist"
+        if [ "${ltestdir#ssh://}" != "$ltestdir" ]; then
+            # Remove "ssh://" from the string
+            lchkpath="${ltestdir#ssh://}"
+            lremotessh="${lchkpath%%/*}"
+            lchkpath="${lchkpath#*/}"
+            lchkpath="/$lchkpath"
+            lchkcmd="ssh $lremotessh ls"; 
+        else
+            msg "DEBUG" "Local directory to test is: $ltestdir"
+            lchkpath=$ltestdir
+            lchkcmd="ls ";
+        fi
+
+        msg "DEBUG" "Checkcmd is $lchkcmd"
+        msg "DEBUG" "Checkpath is $lchkpath"
+
+        if  $lchkcmd "$lchkpath" > /dev/null 2>&1; then
+            msg "INFO" "Directory $lchkpath - exist"
             set +x
             unset lremotessh
             unset lremotedir
-            unset ldataset
-            unset lcheckpath
+            unset lchkpath
             unset lchkcmd
             return 0
         else
-            msg "INFO" "Directory $lcheckpath doesn't exist"
+            msg "INFO" "Directory $lchkpath doesn't exist"
             set +x
             unset lremotessh
             unset lremotedir
-            unset ldataset
-            unset lcheckpath
+            unset lchkpath
             unset lchkcmd
             return 1
         fi
     }
     
     dircreate() {
-        # $1 - remote directory
-        set +e
+        # $1 - target directory to be created
+        # Strings that work are:
+        # for local directories at exampel /tmp/test
+        # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="dircreate"
-        lremotessh="$1"
-        lremotedir="$2"
-        ldataset="$3"
-        lcreatepath=""
-        lmkpath=""
+        ltgtdir="$1"
+        lcrtpath=""
+        lcrtcmd=""
+        lremotessh=""
+        
+        
+         if [ -z "$ltgtdir" ]; then
+            msg "ERROR" "Empty directory string was given!"
+            return 2
+        fi
+        
 
-        if [ -z "$lremotessh" ]; then
-            lmkpath="mkdir -p";
+        if [ "${ltgtdir#ssh://}" != "$ltgtdir" ]; then
+            # Remove "ssh://" from the string
+            lcrtpath="${ltgtdir#ssh://}"
+            lremotessh="${lcrtpath%%/*}"
+            lcrtpath="${lcrtpath#*/}"
+            lcrtpath="/$lcrtpath"
+            lcrtcmd="ssh $lremotessh mkdir -p"; 
         else
-            lmkpath="ssh $lremotessh mkdir -p"; 
+            msg "DEBUG" "Local directory to test is: $ltgtdir"
+            lcrtpath=$ltgtdir
+            lcrtcmd="mkdir -p ";
         fi
 
-        msg "DEBUG" "Remote dir is $lremotedir"
-        msg "DEBUG" "Dataset dir is $ldataset"
-        lcreatepath="/$lremotedir/$ldataset"
-        msg "INFO" "Creating Path at remote path $lcreatepath"
+        #msg "DEBUG" "Remote dir is $lremotedir"
+        #msg "DEBUG" "Dataset dir is $ldataset"
+        #lcreatepath="/$lremotedir/$ldataset"
+        msg "INFO" "Creating Path at path $lcrtpath"
+        msg "INFO" "Create command is $lcrtcmd"
         # when the ssh mkdir fails, we need the error handler
-        exec_cmd $lmkpath "$lcreatepath"
+        
+        # because the expansion won't work otherwise, we need to disable the
+        # check for the next line
+        # shellcheck disable=SC2086
+        exec_cmd $lcrtcmd "$lcrtpath"
 
-        unset lmkpath
+        unset ltgtdir
+        unset lcrtpath
         unset lremotessh
-        unset lremotedir
-        unset ldataset
-        unset lcreatepath
+        unset lcrtcmd
+        
         return 0
     }
 fi
