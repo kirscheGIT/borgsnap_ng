@@ -7,3 +7,4 @@ server*.conf
 test*
 UNSORTED_INFO.md
 test_dir.sh
+test_dir2.sh

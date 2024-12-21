@@ -22,9 +22,9 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         }
         export MSG_DEFINED=1
     fi
-
+    msg "DEBUG" "-----------------------------------------------"
     msg "DEBUG" "sourced checkdirexists.sh"
-
+    msg "DEBUG" "-----------------------------------------------"
     direxists(){
         # $1 - target directory to be created
         # Strings that work at exampel:

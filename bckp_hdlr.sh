@@ -35,9 +35,9 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
             msg "INFO" "Processing $dataset"
             msg "INFO" "remotedir is $remotedir"
-            if [ "$localdir" != "" ] && [ ! -d "$localdir" ] && [ "$LOCALSKIP" != true ]; then
+            if [ "$localdir" != "" ] && [ "$LOCALSKIP" != true ]; then
                 msg "INFO" "Initializing borg $localdir"
-                exec_cmd mkdir -p "$localdir"
+                dircreate "" "$LOCAL" "$dataset"
                 exec_cmd borg init --encryption=repokey "$localdir"
             fi
             if [ "$remotedir" != "" ]; then

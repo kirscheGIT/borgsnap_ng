@@ -22,9 +22,9 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
     fi
 
     set -u
-
+    msg "DEBUG" "-----------------------------------------------"
     msg "msg_and_err_hdlr.sh invoked"
-
+    msg "DEBUG" "-----------------------------------------------"
 
     readconfigfile() {
         LASTFUNC="readconfigfile"
