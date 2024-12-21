@@ -27,8 +27,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
 
     direxists(){
         # $1 - target directory to be created
-        # Strings that work are:
-        # for local directories at exampel /tmp/test
+        # Strings that work at exampel:
+        # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="direxists"
         ltestdir="$1"
@@ -78,8 +78,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     
     dircreate() {
         # $1 - target directory to be created
-        # Strings that work are:
-        # for local directories at exampel /tmp/test
+        # Strings that work at exampel:
+        # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="dircreate"
         ltgtdir="$1"
