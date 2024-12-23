@@ -64,7 +64,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         # $2 - mandatory label of the backup
         # $3 - mandatory borg options like compression etc. 
         #      valid for all repos in the list
-        # $4 - optional - remote borg command
+        # $4 - backup source path 
+        # $5 - optional - remote borg command
         #      if multiple remote repos are used, this value
         #      is used for all of them!
 
@@ -72,8 +73,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         lpathlist="$1"
         lbackuplabel="$2"
         lborgopts="$3"
-        lborgpath="$4"
-        llocalpath="$5"
+        lsrcpath="$4"
+        lborgpath="$5"
         lremotepath=""
 
         if [ -n "$lborgpath" ]; then
@@ -83,11 +84,11 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         for i in $lpathlist; do
             if [ "${i#ssh://}" != "$i" ]; then
-                exec_cmd borg create "$lborgopts" --encryption=repokey "$lremotepath" "${i}::${lbackuplabel}" "$llocalpath"
+                exec_cmd borg create "$lborgopts" --encryption=repokey "$lremotepath" "${i}::${lbackuplabel}" "$lsrcpath"
                   
                 set -e
             else 
-                exec_cmd borg create "$lborgopts" --encryption=repokey  "${i}::${lbackuplabel}" "$llocalpath"
+                exec_cmd borg create "$lborgopts" --encryption=repokey  "${i}::${lbackuplabel}" "$lsrcpath"
                   
                 set -e
             fi
@@ -100,6 +101,44 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset lborgopts
         unset lborgpath
         unset llocalpath
+        unset lremotepath
+
+    }
+
+    pruneBorg(){
+        # $1 - mandatory list of repo paths
+        # $2 - mandatory borg options like compression etc. 
+        #      valid for all repos in the list
+        # $3 - optional - remote borg command
+        #      if multiple remote repos are used, this value
+        #      is used for all of them!
+
+        LASTFUNC="createBorg"
+        lpathlist="$1"
+        lborgopts="$2"
+        lborgpath="$3"
+        lremotepath=""
+
+        if [ -n "$lborgpath" ]; then
+            msg "borgpath set"
+            lremotepath="--remote-path="${lborgpath}
+        fi
+
+        for i in $lpathlist; do
+            if [ "${i#ssh://}" != "$i" ]; then
+                exec_cmd borg prune "$lborgopts" "$lremotepath" "${i}"
+                  
+                set -e
+            else 
+                exec_cmd borg prune "$lborgopts" "${i}"
+                  
+                set -e
+            fi
+        done
+                
+        unset lpathlist
+        unset lborgopts
+        unset lborgpath
         unset lremotepath
 
     }
