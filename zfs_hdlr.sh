@@ -112,27 +112,39 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
     }
 
     snapshotZFS() {
-        # $1 
-        set +e
-        SNAPSHOTEXISTS="$(zfs list -t snapshot | grep "${1}@${2}")" 
-        echo "$SNAPSHOTEXISTS"
-        if [ "$SNAPSHOTEXISTS" = "" ]; then
-            set -e
+        # $1 - mandatory ZFS dataset
+        # $2 - mandatory ZFS snapshot label
+        LASTFUNC="snapshotZFS"
+        ldataset="$1"
+        llabel="$2"
+
+        if [ -z "${RECURSIVE+x}" ]; then
+            export RECURSIVE="false"
+        fi
+
+        if [ -n "$(getZFSSnapshot "$ldataset" "$llabel")" ]; then
+            msg "WARNING" "ZFS Snapshot for dataset $ldataset @ label $llabel exists!"
+            msg "WARNING" "Assuming last Borg run didn't finish - restarting Borg"
+        else
             if [ "$RECURSIVE" = "true" ]; then
-            echo "Recursive snapshot ${1}@${2}"
-            zfs snapshot -r "${1}@${2}"
+                exec_cmd zfs snapshot -r "$ldataset}@$llabel"
             else
-            echo "Snapshot ${1}@${2}"
-            zfs snapshot "${1}@${2}"
+                exec_cmd zfs snapshot "$ldataset}@$llabel"
             fi
             # Check if the snapshot operation is still running
+            # depending on the system load and disk speed this might take longer than
+            # anticipated
+            # TODO: Implement Time Out?
             while pgrep -f "zfs snapshot" > /dev/null; do
-                echo "Waiting for the snapshot operation to complete..."
-                sleep 5  #Sleep for a short time before checking again
+                    echo "Waiting for the snapshot operation to complete..."
+                    sleep 5  #Sleep for a short time before checking again
             done
-        else
-            echo "Snapshot ${1}@${2} exists. Assuming last run did not finish - restarting borg"
+            msg "INFO" "Snapshot operation for dataset $ldataset @ label $llabel finished."
         fi
+
+        unset ldataset
+        unset llabel
+        return 0
     }    
 
     destroysnapshot() {
