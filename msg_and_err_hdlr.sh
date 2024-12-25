@@ -40,7 +40,7 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
             lcalling_function="$LASTFUNC"
             LASTFUNC="msg"
             if [ "$#" -eq 1 ]; then
-                printf "%s\n" "$1"
+                printf "%s\n" "$1" >&2 
 
             elif [ "$#" -eq 2 ]; then
                 lmsg_type="$1"
@@ -53,13 +53,13 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
                 if [ -n "$lvalue" ]; then
                     lmsg_key="$lvalue"
                     if [ "$MSG_LEVEL" -ge "$lmsg_key" ]; then
-                        printf "%s: %s in Function %s\n" "$lmsg_type" "$lmsg_content" "$lcalling_function"
+                        printf "%s: %s in Function %s\n" "$lmsg_type" "$lmsg_content" "$lcalling_function" >&2 
                     fi
                 else
-                    echo "$1 Is a wrong key word"
+                    echo "$1 Is a wrong key word" >&2 
                 fi    
             else
-                printf "USAGE ERROR: msg() function - Too many parameters.  max. 2 parameters alowed. Instead %i parameters were provided: %s\n" "$#" "$*"
+                printf "USAGE ERROR: msg() function - Too many parameters.  max. 2 parameters alowed. Instead %i parameters were provided: %s\n" "$#" "$*" >&2 
             fi
             LASTFUNC="$lcalling_function"
             unset lcalling_function

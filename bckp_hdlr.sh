@@ -1,5 +1,5 @@
 #!/bin/sh
-# cfg_file_hdlr.sh  - licensed under GPLv3. See the LICENSE file for additional
+# bckp_hdlr.sh  - licensed under GPLv3. See the LICENSE file for additional
 # details.
 # shellcheck disable=SC3043
 if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
@@ -27,31 +27,29 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
     execBackup(){
         LASTFUNC="execBackup"
-
-        for i in $FS; do
-            dataset="$i"
-            localdir="${LOCAL:+$LOCAL/$dataset}"
-            remotedir="${REMOTESSHCONFIG:+"ssh://"$REMOTESSHCONFIG/$REMOTEDIRPSX/$dataset}"
-
-            msg "INFO" "Processing $dataset"
-            msg "INFO" "remotedir is $remotedir"
-            if [ "$localdir" != "" ] && [ "$LOCALSKIP" != true ]; then
-                msg "INFO" "Initializing borg $localdir"
-                dircreate "" "$LOCAL" "$dataset"
-                exec_cmd borg init --encryption=repokey "$localdir"
-            fi
-            if [ "$remotedir" != "" ]; then
-                #direxists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
-                if direxists "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"; then
-                    set -e
-                    msg "INFO" "Initializing remote $remotedir"
-                    dircreate "$REMOTESSHCONFIG" "$REMOTEDIRPSX" "$dataset"
-                    exec_cmd borg init --encryption=repokey --remote-path="${BORGPATH}" "$remotedir"
-                    
+        OLD_IFS="$IFS"
+        IFS=';'
+        for dataset in $FS; do
+            dataset=$(echo "$dataset" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            
+            for repo in $REPOS; do
+                repo=$(echo "$repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+                # now we check if the current repo has to be skipped
+                if { [ "${repo#ssh://}" != "$repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
+                    { [ "${repo#ssh://}" = "$repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
+                     
+                    if direxists "$repo"; then
+                        msg "INFO" "Creating repo directory: $repo"
+                        dircreate "$repo"
+                        msg "INFO" "Init Borg repo: $repo"
+                        initBorg "$repo" # TODO Add Borg remote command
+                    fi
                 fi
-                set -e
-            fi
+
+            done
+            
         done
+        IFS="$OLD_IFS"
     }    
     
 

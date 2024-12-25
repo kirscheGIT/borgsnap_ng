@@ -22,9 +22,11 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         }
         export MSG_DEFINED=1
     fi
+    
     msg "DEBUG" "-----------------------------------------------"
     msg "DEBUG" "sourced checkdirexists.sh"
     msg "DEBUG" "-----------------------------------------------"
+    
     direxists(){
         # $1 - target directory to be created
         # Strings that work at exampel:
@@ -95,9 +97,11 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         
 
         if [ "${ltgtdir#ssh://}" != "$ltgtdir" ]; then
-            # Remove "ssh://" from the string
+            # Remove "ssh://" from the path string
             lcrtpath="${ltgtdir#ssh://}"
+            # Get the first part of the ssh:// string
             lremotessh="${lcrtpath%%/*}"
+            # build the correct tgt path 
             lcrtpath="${lcrtpath#*/}"
             lcrtpath="/$lcrtpath"
             lcrtcmd="ssh $lremotessh mkdir -p"; 
