@@ -25,19 +25,61 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
     msg "DEBUG" "sourced bckp_hdlr.sh"
 
-    execBackup(){
-        LASTFUNC="execBackup"
+    startBackupMachine(){
+        LASTFUNC="startBackupMachine"
+        lfslist="$1"
+        lrepolist="$2"
+        lintervallist="$3"
+ 
+        llabel=""
+        llastsnap=""       
+        lkeepduration=""
+
+        ldate=$(exec_cmd date +"%Y%m%d")
+        ldayofweek=$(exec_cmd date +"%w")
+        ldayofmonth=$(exec_cmd date +"%d")
+
         OLD_IFS="$IFS"
         IFS=';'
-        for dataset in $FS; do
-            dataset=$(echo "$dataset" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+        for ldataset in $lfslist; do
+            ldataset=$(echo "$ldataset" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            ###########################################
+            # Major logical change compared to original borgsnap:
+            # First the snapshot is created. Then the code will take care of the repo and backup dirs
+            # Advantage: If something within the repository process or borg goes south, we have hopefully 
+            # at least the snapshot!
+            ###########################################
             
-            for repo in $REPOS; do
+            # INTERVALLIST has the following format -> Intervalllabel,keepduration;Intervallabel2,Interval2duration;...
+            # INTERVALLIST="monthly,1;weekly,4;daily,7"
+            for linterval in $lintervallist; do
+                llabel=$(echo "$linterval" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+                lkeepduration=$(echo "$linterval" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+                if [ "$llabel" = "monthly" ] || [ "$llabel" = "weekly" ]; then
+                    llastsnap=$(getZFSSnapshot "$ldataset" "$llabel" "LAST")
+                    if { [ -z "$llastsnap" ] ||  [ "$ldayofmonth" -eq 1 ]; } && [ "$llabel" = "monthly" ]; then
+                        llabel="$llabel""-""$ldate"
+                    elif { [ -z "$llastsnap" ] ||  [ "$ldayofweek" -eq 0 ]; } && [ "$llabel" = "weekly" ]; then
+                        llabel="$llabel""-""$ldate"
+                    else
+                        continue
+                    fi
+                else
+                    llabel="$llabel-$ldate"
+                fi
+                # TODO Pre and post scripts for the snapshots
+                snapshotZFS "$ldataset" "$llabel"
+
+
+            done
+
+            for repo in $lrepolist; do
                 repo=$(echo "$repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 # now we check if the current repo has to be skipped
                 if { [ "${repo#ssh://}" != "$repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
                     { [ "${repo#ssh://}" = "$repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
-                     
+
+                    # TODO this is wrong. The check is logical wrong 
                     if direxists "$repo"; then
                         msg "INFO" "Creating repo directory: $repo"
                         dircreate "$repo"
@@ -45,11 +87,59 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         initBorg "$repo" # TODO Add Borg remote command
                     fi
                 fi
-
             done
+
             
         done
         IFS="$OLD_IFS"
+
+        unset lkeepduration
+        unset llabel
+        unset llastsnap
+        unset ldate
+        unset ldayofweek
+        unset ldayofmonth
+    }
+    execBackup(){
+        LASTFUNC="execBackup"
+
+
+          # $1 - volume, i.e. zroot/home
+            # $2 - label, i.e. monthly-20170602
+            # Expects localdir, remotedir, BINDDIR
+            LASTFUNC="dobackup"
+            msg "------ $(date) ------"
+            bind_dir="${BINDDIR}/${1}"
+            exec_cmd mkdir -p "$bind_dir"
+            msg "DEBUG" "bind_dir is: $bind_dir" 
+            exec_cmd mount -t zfs "${1}@${2}" "$bind_dir"
+            if [ "$RECURSIVE" = "true" ]; then
+                recursivezfsmount "$1" "$2"
+            fi
+            BORG_OPTS="--info --stats --compression $COMPRESS --files-cache $CACHEMODE --exclude-if-present .noborg"
+            if [ "$localdir" != "" ] && [ "$LOCALSKIP" != "true" ]; then
+                echo "Doing local backup of ${1}@${2}"
+                # shellcheck disable=SC2086
+                borg create $BORG_OPTS "${localdir}::${2}" "$bind_dir"
+                if [ "$LOCAL_READABLE_BY_OTHERS" = "true" ]; then
+                echo "Set read permissions for others"
+                chmod +rx "${localdir}" -R
+                fi
+            else
+                msg "INFO" "Skipping local backup"
+            fi
+            if [ "$remotedir" != "" ]; then
+                echo "Doing remote backup of ${1}@${2}"
+                # shellcheck disable=SC2086
+                borg create $BORG_OPTS --remote-path="${BORGPATH}" "${remotedir}::${2}" "$bind_dir"
+            fi
+            if [ "$RECURSIVE" = "true" ]; then
+                recursivezfsumount "$1" "$2"
+            fi
+
+            umount -n "$bind_dir"        
+
+
     }    
     
 

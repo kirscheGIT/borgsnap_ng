@@ -71,7 +71,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             msg "DEBUG" "We are in the First branch."
             exec_cmd zfs list -t snapshot -o name | grep "${1}@${2}"
         elif [ "$llistParameter" = "LATEST" ]; then # Get the latest snapshot of a given backup intervall
-            msg "DEBUG" "We are in the LAST branch."
+            msg "DEBUG" "We are in the LATEST branch."
             exec_cmd zfs list -t snapshot -o name | grep "${ldataset}@${ldate}-" | sort -nr | head -1 # Get a list of the snapshots of a given backup intervall
         elif [ "$llistParameter" = "ALL" ]; then
             msg "DEBUG" "We are in the All branch"
