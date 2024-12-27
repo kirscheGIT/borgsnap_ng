@@ -188,17 +188,6 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
 
     }
 
-    recursivezfsmount() {
-        # $1 - volume, pool/dataset
-        # $2 - snapshot label
-        # Expects $bind_dir
-
-        for R in $(zfs list -Hr -t snapshot -o name "$1" | grep "@$2$" | sed -e "s@^$1@@" -e "s/@$2$//"); do
-            echo "Mounting child filesystem snapshot: $1$R@$2"
-            mkdir -p "$bind_dir$R"
-            mount -t zfs "$1$R@$2" "$bind_dir$R"
-        done
-    }
     
     recursivezfsumount() {
         # $1 - volume, pool/dataset

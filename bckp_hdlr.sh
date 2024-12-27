@@ -104,7 +104,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 fi
                 # TODO Pre and post scripts for the snapshots
                 snapshotZFS "$ldataset" "$llabel" "$lrecursive"
-
+                mountZFSSnapshot "$lsnapmountbasedir" "$ldataset" "$llabel" "$lrecursive"
                 lborgpurgeopts="$lborgpurgeopts --keep-$llabel=$lkeepduration"
 
             done
@@ -121,6 +121,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         msg "INFO" "Init Borg repo: $repo"
                         initBorg "$repo" # TODO Add Borg remote command
                     fi
+                    #TODO Take into accoutn recursive snaps
                     createBorg "$repo" "$llabel" "$lborgrepoopts" "$ldataset" # TODO Add Borg remote command
                     pruneBorg "$repo" "$lborgpurgeopts"                       # TODO Add Borg remote command
                 fi
