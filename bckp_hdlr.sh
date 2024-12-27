@@ -38,18 +38,25 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         lintervallist="$3"
         lborgrepoopts="$4"
         lborgpurgeopts="$5"
+        lsnapmountbasedir="$6"
  
         llabel=""
         llastsnap=""       
         lkeepduration=""
-        lrecurssve=""
+        lrecursive=""
 
         if [ -z "$lborgreopopts" ]; then
             lborgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
         fi
         if [ -z "$lborgpurgeopts" ]; then
-            lborgpurgeopts="--info --stats --keep-daily=7 --keep-weekly=4 --keep-monthly=1"
+            lborgpurgeopts="--info --stats"
         fi
+        if [ -z "$lsnapmountbasedir" ]; then
+            lsnapmountbasedir="/run/borgsnap_ng/"
+        fi
+
+
+
         msg "------ $(date) ------"
         
 
@@ -89,7 +96,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     llabel="$llabel-$ldate"
                 fi
                 # TODO Pre and post scripts for the snapshots
-                snapshotZFS "$ldataset" "$llabel"
+                snapshotZFS "$ldataset" "$llabel" "$lrecursive"
 
                 lborgpurgeopts="$lborgpurgeopts --keep-$llabel=$lkeepduration"
 
@@ -116,10 +123,16 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         done
         IFS="$OLD_IFS"
 
-        unset lborgopts
-        unset lkeepduration
+        unset lfslist
+        unset lrepolist
+        unset lintervallist
+        unset lborgrepoopts
+        unset lborgpurgeopts
+        unset lsnapmountbasedir
         unset llabel
-        unset llastsnap
+        unset llastsnap       
+        unset lkeepduration
+        unset lrecursive
         unset ldate
         unset ldayofweek
         unset ldayofmonth
