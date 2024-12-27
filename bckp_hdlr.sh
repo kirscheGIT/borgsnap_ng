@@ -64,8 +64,15 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         ldayofweek=$(exec_cmd date +"%w")
         ldayofmonth=$(exec_cmd date +"%d")
 
+        if ! direxists "$lsnapmountbasedir"; then
+            msg "INFO" "Creating snap mount directory: $lsnapmountbasedir"
+            dircreate "$lsnapmountbasedir"
+        fi
+
         OLD_IFS="$IFS"
         IFS=';'
+
+
         
         for ldataset in $lfslist; do
             ldataset=$(echo "$ldataset" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
@@ -123,6 +130,9 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         done
         IFS="$OLD_IFS"
 
+        unset linterval
+        unset ldataset
+        unset repo
         unset lfslist
         unset lrepolist
         unset lintervallist

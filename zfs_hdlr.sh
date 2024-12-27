@@ -125,9 +125,9 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             msg "WARNING" "Assuming last Borg run didn't finish - restarting Borg"
         else
             if [ "$lrecursive" = "r" ] || [ "$lrecursive" = "R" ] ; then
-                exec_cmd zfs snapshot -r "$ldataset}@$llabel"
+                exec_cmd zfs snapshot -r "$ldataset@$llabel"
             else
-                exec_cmd zfs snapshot "$ldataset}@$llabel"
+                exec_cmd zfs snapshot "$ldataset@$llabel"
             fi
             # Check if the snapshot operation is still running
             # depending on the system load and disk speed this might take longer than
@@ -164,6 +164,29 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         echo "Destroy operation has completed."
     }
 
+    mountZFSSnapshot() {
+        lsnapmountbasedir="$1"
+        ldataset="$2"
+        llabel="$3"
+        lrecursive="$4"
+
+        if [ "$lrecursive" = "r" ] || [ "$lrecursive" = "R" ] ; then
+            for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$ldataset" | grep "@$llabel$" | sed -e "s@^$ldataset@@" -e "s/@$llabel$//"); do
+                msg "INFO" "Mounting child filesystem snapshot: $ldataset$R@$llabel"
+                dircreate "$lsnapmountbasedir/$ldataset$R"
+                exec_cmd mount -t zfs "$ldataset$R@$llabel" "$lsnapmountbasedir/$ldataset$R"
+            done
+        else
+            dircreate "$lsnapmountbasedir/$ldataset"
+            exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
+        fi
+
+        unset lsnapmountbasedir
+        unset ldataset
+        unset llabel
+        unset lrecursive
+
+    }
 
     recursivezfsmount() {
         # $1 - volume, pool/dataset
