@@ -112,6 +112,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             for repo in $lrepolist; do
                 repo=$(echo "$repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 # now we check if the current repo has to be skipped
+                #TODO changing REPOSKIP from global to local variable
                 if { [ "${repo#ssh://}" != "$repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
                     { [ "${repo#ssh://}" = "$repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
 
