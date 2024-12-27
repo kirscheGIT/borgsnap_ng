@@ -36,6 +36,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         LASTFUNC="initBorg"
         lpathlist="$1"
         lborgpath="$2"
+        
         lremotepath=""
 
         if [ -n "$lborgpath" ]; then

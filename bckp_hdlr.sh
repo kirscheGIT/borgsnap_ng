@@ -25,15 +25,32 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
     msg "DEBUG" "sourced bckp_hdlr.sh"
 
+    #TODO mount zfs
+    #TODO recursive ZFS snap and mount
+    #TODO unmount
+    #TODO in case of error exit do an unmount of zfs
+
+    
     startBackupMachine(){
         LASTFUNC="startBackupMachine"
         lfslist="$1"
         lrepolist="$2"
         lintervallist="$3"
+        lborgrepoopts="$4"
+        lborgpurgeopts="$5"
  
         llabel=""
         llastsnap=""       
         lkeepduration=""
+
+        if [ -z "$lborgreopopts" ]; then
+            lborgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
+        fi
+        if [ -z "$lborgpurgeopts" ]; then
+            lborgpurgeopts="--info --stats --keep-daily=7 --keep-weekly=4 --keep-monthly=1"
+        fi
+        msg "------ $(date) ------"
+        
 
         ldate=$(exec_cmd date +"%Y%m%d")
         ldayofweek=$(exec_cmd date +"%w")
@@ -41,6 +58,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
         OLD_IFS="$IFS"
         IFS=';'
+        
         for ldataset in $lfslist; do
             ldataset=$(echo "$ldataset" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
             ###########################################
@@ -55,6 +73,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             for linterval in $lintervallist; do
                 llabel=$(echo "$linterval" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 lkeepduration=$(echo "$linterval" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+                
                 if [ "$llabel" = "monthly" ] || [ "$llabel" = "weekly" ]; then
                     llastsnap=$(getZFSSnapshot "$ldataset" "$llabel" "LAST")
                     if { [ -z "$llastsnap" ] ||  [ "$ldayofmonth" -eq 1 ]; } && [ "$llabel" = "monthly" ]; then
@@ -70,6 +89,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 # TODO Pre and post scripts for the snapshots
                 snapshotZFS "$ldataset" "$llabel"
 
+                lborgpurgeopts="$lborgpurgeopts --keep-$llabel=$lkeepduration"
 
             done
 
@@ -79,13 +99,14 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 if { [ "${repo#ssh://}" != "$repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
                     { [ "${repo#ssh://}" = "$repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
 
-                    # TODO this is wrong. The check is logical wrong 
-                    if direxists "$repo"; then
+                    if ! direxists "$repo"; then
                         msg "INFO" "Creating repo directory: $repo"
                         dircreate "$repo"
                         msg "INFO" "Init Borg repo: $repo"
                         initBorg "$repo" # TODO Add Borg remote command
                     fi
+                    createBorg "$repo" "$llabel" "$lborgrepoopts" "$ldataset" # TODO Add Borg remote command
+                    pruneBorg "$repo" "$lborgpurgeopts"                       # TODO Add Borg remote command
                 fi
             done
 
@@ -93,6 +114,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         done
         IFS="$OLD_IFS"
 
+        unset lborgopts
         unset lkeepduration
         unset llabel
         unset llastsnap
