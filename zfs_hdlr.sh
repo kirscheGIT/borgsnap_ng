@@ -170,15 +170,17 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         llabel="$3"
         lrecursive="$4"
 
+        dircreate "$lsnapmountbasedir/$ldataset"
+        exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
+        #TODO test the recursive snapshot mount 
+        #TODO Idea: Test if a "no mount" list can be used or provided - background: The recursive option takes a snapshot for all subvolumes
+        # at the same time. But maybe we don't want to backup all of them
         if [ "$lrecursive" = "r" ] || [ "$lrecursive" = "R" ] ; then
             for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$ldataset" | grep "@$llabel$" | sed -e "s@^$ldataset@@" -e "s/@$llabel$//"); do
                 msg "INFO" "Mounting child filesystem snapshot: $ldataset$R@$llabel"
                 dircreate "$lsnapmountbasedir/$ldataset$R"
                 exec_cmd mount -t zfs "$ldataset$R@$llabel" "$lsnapmountbasedir/$ldataset$R"
             done
-        else
-            dircreate "$lsnapmountbasedir/$ldataset"
-            exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
         fi
 
         unset lsnapmountbasedir

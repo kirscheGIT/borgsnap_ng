@@ -26,7 +26,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
     msg "DEBUG" "sourced bckp_hdlr.sh"
 
     #TODO mount zfs
-    #TODO recursive ZFS snap and mount
+    #TODO recursive ZFS snap and mount / recursive mount is done
     #TODO unmount
     #TODO in case of error exit do an unmount of zfs
 
