@@ -30,7 +30,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
     #TODO unmount
     #TODO in case of error exit do an unmount of zfs
 
-    
+
     startBackupMachine(){
         LASTFUNC="startBackupMachine"
         lfslist="$1"
@@ -42,6 +42,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         llabel=""
         llastsnap=""       
         lkeepduration=""
+        lrecurssve=""
 
         if [ -z "$lborgreopopts" ]; then
             lborgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
@@ -60,7 +61,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         IFS=';'
         
         for ldataset in $lfslist; do
-            ldataset=$(echo "$ldataset" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            ldataset=$(echo "$ldataset" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            lrecursive=$(echo "$ldataset" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
             ###########################################
             # Major logical change compared to original borgsnap:
             # First the snapshot is created. Then the code will take care of the repo and backup dirs

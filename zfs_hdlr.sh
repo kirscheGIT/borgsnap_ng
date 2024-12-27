@@ -117,16 +117,14 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         LASTFUNC="snapshotZFS"
         ldataset="$1"
         llabel="$2"
+        lrecursive="$3"
 
-        if [ -z "${RECURSIVE+x}" ]; then
-            export RECURSIVE="false"
-        fi
 
         if [ -n "$(getZFSSnapshot "$ldataset" "$llabel")" ]; then
             msg "WARNING" "ZFS Snapshot for dataset $ldataset @ label $llabel exists!"
             msg "WARNING" "Assuming last Borg run didn't finish - restarting Borg"
         else
-            if [ "$RECURSIVE" = "true" ]; then
+            if [ "$lrecursive" = "r" ] || [ "$lrecursive" = "R" ] ; then
                 exec_cmd zfs snapshot -r "$ldataset}@$llabel"
             else
                 exec_cmd zfs snapshot "$ldataset}@$llabel"
@@ -142,6 +140,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             msg "INFO" "Snapshot operation for dataset $ldataset @ label $llabel finished."
         fi
 
+        unset lrecursive
         unset ldataset
         unset llabel
         return 0
