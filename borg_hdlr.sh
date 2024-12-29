@@ -117,7 +117,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         LASTFUNC="createBorg"
         lpathlist="$1"
         lborgopts="$2"
-        lborgpath="$3"
+        lcompactlabel="$3"
+        lborgpath="$4"
         lremotepath=""
 
         if [ -n "$lborgpath" ]; then
@@ -128,11 +129,15 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         for i in $lpathlist; do
             if [ "${i#ssh://}" != "$i" ]; then
                 exec_cmd borg prune "$lborgopts" "$lremotepath" "${i}"
-                  
+                if [ "$lcompactlabel" = "monthly" ]; then
+                    exec_cmd borg compact "${i}"
+                fi  
                 set -e
             else 
                 exec_cmd borg prune "$lborgopts" "${i}"
-                  
+                if [ "$lcompactlabel" = "monthly" ]; then
+                    exec_cmd borg compact "${i}"
+                fi    
                 set -e
             fi
         done

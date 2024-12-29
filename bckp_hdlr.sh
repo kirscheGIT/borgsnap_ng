@@ -52,7 +52,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             lborgpurgeopts="--info --stats"
         fi
         if [ -z "$lsnapmountbasedir" ]; then
-            lsnapmountbasedir="/run/borgsnap_ng/"
+            lsnapmountbasedir="/run/borgsnap_ng/" #TODO set to Borg defaults
         fi
 
 
@@ -94,20 +94,23 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     llastsnap=$(getZFSSnapshot "$ldataset" "$llabel" "LAST")
                     if { [ -z "$llastsnap" ] ||  [ "$ldayofmonth" -eq 1 ]; } && [ "$llabel" = "monthly" ]; then
                         llabel="$llabel""-""$ldate"
+                        break
                     elif { [ -z "$llastsnap" ] ||  [ "$ldayofweek" -eq 0 ]; } && [ "$llabel" = "weekly" ]; then
                         llabel="$llabel""-""$ldate"
+                        break
                     else
                         continue
                     fi
                 else
                     llabel="$llabel-$ldate"
+                    break
                 fi
-                # TODO Pre and post scripts for the snapshots
-                snapshotZFS "$ldataset" "$llabel" "$lrecursive"
-                mountZFSSnapshot "$lsnapmountbasedir" "$ldataset" "$llabel" "$lrecursive"
-                lborgpurgeopts="$lborgpurgeopts --keep-$llabel=$lkeepduration"
 
             done
+            # TODO Pre and post scripts for the snapshots
+            snapshotZFS "$ldataset" "$llabel" "$lrecursive"
+            mountZFSSnapshot "$lsnapmountbasedir" "$ldataset" "$llabel" "$lrecursive"
+            lborgpurgeopts="$lborgpurgeopts --keep-$llabel=$lkeepduration"
 
             for repo in $lrepolist; do
                 repo=$(echo "$repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
@@ -122,11 +125,13 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         msg "INFO" "Init Borg repo: $repo"
                         initBorg "$repo" # TODO Add Borg remote command
                     fi
-                    #TODO Take into accoutn recursive snaps
+                    #TODO Take into account recursive snaps
                     createBorg "$repo" "$llabel" "$lborgrepoopts" "$ldataset" # TODO Add Borg remote command
                     pruneBorg "$repo" "$lborgpurgeopts"                       # TODO Add Borg remote command
                 fi
             done
+
+            umountZFSSnapshot "$lsnapmountbasedir" "$ldataset"
 
             
         done
