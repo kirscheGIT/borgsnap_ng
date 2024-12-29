@@ -7,7 +7,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     export REMOTE_DIR_FUNCTION_SCRIPT_SOURCED=1    
     set +e
     #set -x
-    . ./msg_and_err_hdlr.sh
+    . ../common/msg_and_err_hdlr.sh
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""

@@ -112,7 +112,7 @@ if [ -z "${MSG_DEFINED+x}" ]; then
 fi
 ####################################################################################
 
-. ./dir_functions.sh
+. ./common/dir_functions.sh
 . ./cfg_file_hdlr.sh
 
 msg "DEBUG" "$PATH"
