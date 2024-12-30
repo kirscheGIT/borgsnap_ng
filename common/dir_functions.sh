@@ -27,7 +27,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     msg "DEBUG" "sourced checkdirexists.sh"
     msg "DEBUG" "-----------------------------------------------"
     
-#TODO Rename local variables to unique names
+
 
     direxists(){
         # $1 - target directory to be created
@@ -35,47 +35,47 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="direxists"
-        ltestdir="$1"
-        lremotessh=""
-        lchkpath=""
-        lchkcmd=""
+        dirExists_testdir="$1"
+        dirExists_remotessh=""
+        dirExists_chkpath=""
+        dirExists_chkcmd=""
 
-        if [ -z "$ltestdir" ]; then
+        if [ -z "$dirExists_testdir" ]; then
             msg "ERROR" "Empty directory string was given!"
             return 2
         fi
 
-        if [ "${ltestdir#ssh://}" != "$ltestdir" ]; then
+        if [ "${dirExists_testdir#ssh://}" != "$dirExists_testdir" ]; then
             # Remove "ssh://" from the string
-            lchkpath="${ltestdir#ssh://}"
-            lremotessh="${lchkpath%%/*}"
-            lchkpath="${lchkpath#*/}"
-            lchkpath="/$lchkpath"
-            lchkcmd="ssh $lremotessh ls"; 
+            dirExists_chkpath="${dirExists_testdir#ssh://}"
+            dirExists_remotessh="${dirExists_chkpath%%/*}"
+            dirExists_chkpath="${dirExists_chkpath#*/}"
+            dirExists_chkpath="/$dirExists_chkpath"
+            dirExists_chkcmd="ssh $dirExists_remotessh ls"; 
         else
-            msg "DEBUG" "Local directory to test is: $ltestdir"
-            lchkpath=$ltestdir
-            lchkcmd="ls ";
+            msg "DEBUG" "Local directory to test is: $dirExists_testdir"
+            dirExists_chkpath=$dirExists_testdir
+            dirExists_chkcmd="ls ";
         fi
 
-        msg "DEBUG" "Checkcmd is $lchkcmd"
-        msg "DEBUG" "Checkpath is $lchkpath"
+        msg "DEBUG" "Checkcmd is $dirExists_chkcmd"
+        msg "DEBUG" "Checkpath is $dirExists_chkpath"
 
-        if  $lchkcmd "$lchkpath" > /dev/null 2>&1; then
-            msg "INFO" "Directory $lchkpath - exist"
+        if  $dirExists_chkcmd "$dirExists_chkpath" > /dev/null 2>&1; then
+            msg "INFO" "Directory $dirExists_chkpath - exist"
             set +x
-            unset lremotessh
-            unset lremotedir
-            unset lchkpath
-            unset lchkcmd
+            unset dirExists_remotessh
+            unset dirExists_remotedir
+            unset dirExists_chkpath
+            unset dirExists_chkcmd
             return 0
         else
-            msg "INFO" "Directory $lchkpath doesn't exist"
+            msg "INFO" "Directory $dirExists_chkpath doesn't exist"
             set +x
-            unset lremotessh
-            unset lremotedir
-            unset lchkpath
-            unset lchkcmd
+            unset dirExists_remotessh
+            unset dirExists_remotedir
+            unset dirExists_chkpath
+            unset dirExists_chkcmd
             return 1
         fi
     }
@@ -86,49 +86,49 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="dircreate"
-        ltgtdir="$1"
-        lcrtpath=""
-        lcrtcmd=""
-        lremotessh=""
+        dirCreate_tgtdir="$1"
+        dirCreate_crtpath=""
+        dirCreate_crtcmd=""
+        dirCreate_remotessh=""
         
         
-         if [ -z "$ltgtdir" ]; then
+         if [ -z "$dirCreate_tgtdir" ]; then
             msg "ERROR" "Empty directory string was given!"
             return 2
         fi
         
 
-        if [ "${ltgtdir#ssh://}" != "$ltgtdir" ]; then
+        if [ "${dirCreate_tgtdir#ssh://}" != "$dirCreate_tgtdir" ]; then
             # Remove "ssh://" from the path string
-            lcrtpath="${ltgtdir#ssh://}"
+            dirCreate_crtpath="${dirCreate_tgtdir#ssh://}"
             # Get the first part of the ssh:// string
-            lremotessh="${lcrtpath%%/*}"
+            dirCreate_remotessh="${dirCreate_crtpath%%/*}"
             # build the correct tgt path 
-            lcrtpath="${lcrtpath#*/}"
-            lcrtpath="/$lcrtpath"
-            lcrtcmd="ssh $lremotessh mkdir -p"; 
+            dirCreate_crtpath="${dirCreate_crtpath#*/}"
+            dirCreate_crtpath="/$dirCreate_crtpath"
+            dirCreate_crtcmd="ssh $dirCreate_remotessh mkdir -p"; 
         else
-            msg "DEBUG" "Local directory to test is: $ltgtdir"
-            lcrtpath=$ltgtdir
-            lcrtcmd="mkdir -p ";
+            msg "DEBUG" "Local directory to test is: $dirCreate_tgtdir"
+            dirCreate_crtpath=$dirCreate_tgtdir
+            dirCreate_crtcmd="mkdir -p ";
         fi
 
         #msg "DEBUG" "Remote dir is $lremotedir"
         #msg "DEBUG" "Dataset dir is $ldataset"
         #lcreatepath="/$lremotedir/$ldataset"
-        msg "INFO" "Creating Path at path $lcrtpath"
-        msg "INFO" "Create command is $lcrtcmd"
+        msg "INFO" "Creating Path at path $dirCreate_crtpath"
+        msg "INFO" "Create command is $dirCreate_crtcmd"
         # when the ssh mkdir fails, we need the error handler
         
         # because the expansion won't work otherwise, we need to disable the
         # check for the next line
         # shellcheck disable=SC2086
-        exec_cmd $lcrtcmd "$lcrtpath"
+        exec_cmd $dirCreate_crtcmd "$dirCreate_crtpath"
 
-        unset ltgtdir
-        unset lcrtpath
-        unset lremotessh
-        unset lcrtcmd
+        unset dirCreate_tgtdir
+        unset dirCreate_crtpath
+        unset dirCreate_remotessh
+        unset dirCreate_crtcmd
         
         return 0
     }

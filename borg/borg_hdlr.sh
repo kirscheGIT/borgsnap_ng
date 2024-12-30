@@ -26,7 +26,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
     msg "DEBUG" "sourced borg_hdlr.sh"
     msg "DEBUG" "-----------------------------------------------"
     
-    #TODO Rename local variables to unique names
+   
     
     initBorg(){
         # $1 - mandatory list of repo paths
@@ -35,19 +35,19 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="initBorg"
-        lpathlist="$1"
-        lborgpath="$2"
+        initBorg_pathlist="$1"
+        initBorg_borgpath="$2"
         
-        lremotepath=""
+        initBorg_remotepath=""
 
-        if [ -n "$lborgpath" ]; then
+        if [ -n "$initBorg_borgpath" ]; then
             msg "borgpath set"
-            lremotepath="--remote-path="${lborgpath}
+            initBorg_remotepath="--remote-path="${initBorg_borgpath}
         fi
 
-        for i in $lpathlist; do
+        for i in $initBorg_pathlist; do
             if [ "${i#ssh://}" != "$i" ]; then
-                exec_cmd borg init --encryption=repokey "$lremotepath" "$i"
+                exec_cmd borg init --encryption=repokey "$initBorg_remotepath" "$i"
                   
                 set -e
             else
@@ -56,9 +56,9 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             fi
         done
         
-        unset lborgpath
-        unset lremotepath
-        unset lpathlist
+        unset initBorg_borgpath
+        unset initBorg_remotepath
+        unset initBorg_pathlist
         return 0
     }
 
@@ -73,25 +73,25 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="createBorg"
-        lpathlist="$1"
-        lbackuplabel="$2"
-        lborgopts="$3"
-        lsrcpath="$4"
-        lborgpath="$5"
-        lremotepath=""
+        crtBorg_pathlist="$1"
+        crtBorg_backuplabel="$2"
+        crtBorg_borgopts="$3"
+        crtBorg_srcpath="$4"
+        crtBorg_borgpath="$5"
+        crtBorg_remotepath=""
 
-        if [ -n "$lborgpath" ]; then
+        if [ -n "$crtBorg_borgpath" ]; then
             msg "borgpath set"
-            lremotepath="--remote-path="${lborgpath}
+            crtBorg_remotepath="--remote-path="${crtBorg_borgpath}
         fi
 
-        for i in $lpathlist; do
-            if [ "${i#ssh://}" != "$i" ]; then
-                exec_cmd borg create "$lborgopts" --encryption=repokey "$lremotepath" "${i}::${lbackuplabel}" "$lsrcpath"
+        for crtBorg_i in $crtBorg_pathlist; do
+            if [ "${crtBorg_i#ssh://}" != "$crtBorg_i" ]; then
+                exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey "$crtBorg_remotepath" "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
                   
                 set -e
             else 
-                exec_cmd borg create "$lborgopts" --encryption=repokey  "${i}::${lbackuplabel}" "$lsrcpath"
+                exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey  "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
                   
                 set -e
             fi
@@ -99,12 +99,12 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         
         
-        unset lpathlist
-        unset lbackuplabel
-        unset lborgopts
-        unset lborgpath
-        unset llocalpath
-        unset lremotepath
+        unset crtBorg_pathlist
+        unset crtBorg_backuplabel
+        unset crtBorg_borgopts
+        unset crtBorg_borgpath
+        unset crtBorg_localpath
+        unset crtBorg_remotepath
         return 0
 
     }
@@ -118,37 +118,37 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="createBorg"
-        lpathlist="$1"
-        lborgopts="$2"
-        lcompactlabel="$3"
-        lborgpath="$4"
-        lremotepath=""
+        pruneBorg_pathlist="$1"
+        pruneBorg_borgopts="$2"
+        pruneBorg_compactlabel="$3"
+        pruneBorg_borgpath="$4"
+        pruneBorg_remotepath=""
 
-        if [ -n "$lborgpath" ]; then
+        if [ -n "$pruneBorg_borgpath" ]; then
             msg "borgpath set"
-            lremotepath="--remote-path="${lborgpath}
+            pruneBorg_remotepath="--remote-path="${pruneBorg_borgpath}
         fi
 
-        for i in $lpathlist; do
-            if [ "${i#ssh://}" != "$i" ]; then
-                exec_cmd borg prune "$lborgopts" "$lremotepath" "${i}"
-                if [ "$lcompactlabel" = "monthly" ]; then
-                    exec_cmd borg compact "${i}"
+        for pruneBorg_i in $pruneBorg_pathlist; do
+            if [ "${pruneBorg_i#ssh://}" != "$pruneBorg_i" ]; then
+                exec_cmd borg prune "$pruneBorg_borgopts" "$pruneBorg_remotepath" "${pruneBorg_i}"
+                if [ "$pruneBorg_compactlabel" = "monthly" ]; then
+                    exec_cmd borg compact "${pruneBorg_i}"
                 fi  
                 set -e
             else 
-                exec_cmd borg prune "$lborgopts" "${i}"
-                if [ "$lcompactlabel" = "monthly" ]; then
-                    exec_cmd borg compact "${i}"
+                exec_cmd borg prune "$pruneBorg_borgopts" "${pruneBorg_i}"
+                if [ "$pruneBorg_compactlabel" = "monthly" ]; then
+                    exec_cmd borg compact "${pruneBorg_i}"
                 fi    
                 set -e
             fi
         done
                 
-        unset lpathlist
-        unset lborgopts
-        unset lborgpath
-        unset lremotepath
+        unset pruneBorg_pathlist
+        unset pruneBorg_borgopts
+        unset pruneBorg_borgpath
+        unset pruneBorg_remotepath
         return 0
     }
 

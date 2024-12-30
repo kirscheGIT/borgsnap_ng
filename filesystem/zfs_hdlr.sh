@@ -132,7 +132,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             # Check if the snapshot operation is still running
             # depending on the system load and disk speed this might take longer than
             # anticipated
-            # TODO: Implement Time Out?
+            # [x] TODO: Implement Time Out?
             while pgrep -f "zfs snapshot" > /dev/null; do
                     echo "Waiting for the snapshot operation to complete..."
                     sleep 5  #Sleep for a short time before checking again
@@ -196,10 +196,10 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
 
         dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
        # exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
-        #TODO test the recursive snapshot mount 
-        #TODO Idea: Test if a "no mount" list can be used or provided - background: The recursive option takes a snapshot for all subvolumes
+        # [ ] TODO test the recursive snapshot mount 
+        # [ ] TODO Idea: Test if a "no mount" list can be used or provided - background: The recursive option takes a snapshot for all subvolumes
         # at the same time. But maybe we don't want to backup all of them
-        #TODO put the mount and umount scripts to separate files and set the setuid bit for those scripts, making it possible for the borg
+        # [ ] TODO put the mount and umount scripts to separate files and set the setuid bit for those scripts, making it possible for the borg
         # user to mount and unmount snapshots. (Is this also be needed for the createdir functions?) 
         if [ "$mountZFS_recursive" = "r" ] || [ "$mountZFS_recursive" = "R" ] ; then
             for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$mountZFS_dataset" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do

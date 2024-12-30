@@ -25,32 +25,29 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
     msg "DEBUG" "sourced bckp_hdlr.sh"
 
-    #TODO mount zfs
-    #TODO in case of error exit do an unmount of zfs
-    #TODO implement ZFS snapshot clean up aka. destroy
-
+    
     startBackupMachine(){
         LASTFUNC="startBackupMachine"
-        lfslist="$1"
-        lrepolist="$2"
-        lintervallist="$3"
-        lborgrepoopts="$4"
-        lborgpurgeopts="$5"
-        lsnapmountbasedir="$6"
+        strtBckpMchn_fslist="$1"
+        strtBckpMchn_repolist="$2"
+        strtBckpMchn_intervallist="$3"
+        strtBckpMchn_borgrepoopts="$4"
+        strtBckpMchn_borgpurgeopts="$5"
+        strtBckpMchn_snapmountbasedir="$6"
  
-        llabel=""
-        llastsnap=""       
-        lkeepduration=""
-        lrecursive=""
+        strtBckpMchn_label=""
+        strtBckpMchn_lastsnap=""       
+        strtBckpMchn_keepduration=""
+        strtBckpMchn_recursive=""
 
-        if [ -z "$lborgreopopts" ]; then
-            lborgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
+        if [ -z "$strtBckpMchn_borgreopopts" ]; then
+            strtBckpMchn_borgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
         fi
-        if [ -z "$lborgpurgeopts" ]; then
-            lborgpurgeopts="--info --stats"
+        if [ -z "$strtBckpMchn_borgpurgeopts" ]; then
+            strtBckpMchn_borgpurgeopts="--info --stats"
         fi
-        if [ -z "$lsnapmountbasedir" ]; then
-            lsnapmountbasedir="/run/borgsnap_ng/" #TODO set to Borg defaults
+        if [ -z "$strtBckpMchn_snapmountbasedir" ]; then
+            strtBckpMchn_snapmountbasedir="/run/borgsnap_ng/" # [ ] TODO set to Borg defaults
         fi
 
 
@@ -58,13 +55,13 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         msg "------ $(date) ------"
         
 
-        ldate=$(exec_cmd date +"%Y%m%d")
-        ldayofweek=$(exec_cmd date +"%w")
-        ldayofmonth=$(exec_cmd date +"%d")
+        strtBckpMchn_date=$(exec_cmd date +"%Y%m%d")
+        strtBckpMchn_dayofweek=$(exec_cmd date +"%w")
+        strtBckpMchn_dayofmonth=$(exec_cmd date +"%d")
 
-        if ! direxists "$lsnapmountbasedir"; then
-            msg "INFO" "Creating snap mount directory: $lsnapmountbasedir"
-            dircreate "$lsnapmountbasedir"
+        if ! direxists "$strtBckpMchn_snapmountbasedir"; then
+            msg "INFO" "Creating snap mount directory: $strtBckpMchn_snapmountbasedir"
+            dircreate "$strtBckpMchn_snapmountbasedir"
         fi
 
         OLD_IFS="$IFS"
@@ -72,9 +69,9 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
 
         
-        for ldataset in $lfslist; do
-            ldataset=$(echo "$ldataset" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
-            lrecursive=$(echo "$ldataset" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+        for strtBckpMchn_dataset in $strtBckpMchn_fslist; do
+            strtBckpMchn_dataset=$(echo "$strtBckpMchn_dataset" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            strtBckpMchn_recursive=$(echo "$strtBckpMchn_dataset" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
             ###########################################
             # Major logical change compared to original borgsnap:
             # First the snapshot is created. Then the code will take care of the repo and backup dirs
@@ -84,116 +81,76 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             
             # INTERVALLIST has the following format -> Intervalllabel,keepduration;Intervallabel2,Interval2duration;...
             # INTERVALLIST="monthly,1;weekly,4;daily,7"
-            for linterval in $lintervallist; do
-                llabel=$(echo "$linterval" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
-                lkeepduration=$(echo "$linterval" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+            for strtBckpMchn_interval in $strtBckpMchn_intervallist; do
+                strtBckpMchn_label=$(echo "$strtBckpMchn_interval" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+                strtBckpMchn_keepduration=$(echo "$strtBckpMchn_interval" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
                 
-                if [ "$llabel" = "monthly" ] || [ "$llabel" = "weekly" ]; then
-                    llastsnap=$(getZFSSnapshot "$ldataset" "$llabel" "LAST")
-                    if { [ -z "$llastsnap" ] ||  [ "$ldayofmonth" -eq 1 ]; } && [ "$llabel" = "monthly" ]; then
-                        llabel="$llabel""-""$ldate"
+                if [ "$strtBckpMchn_label" = "monthly" ] || [ "$strtBckpMchn_label" = "weekly" ]; then
+                    strtBckpMchn_lastsnap=$(getZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "LAST")
+                    if { [ -z "$vlastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq 1 ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
+                        strtBckpMchn_label="$strtBckpMchn_label""-""$strtBckpMchn_date"
                         break
-                    elif { [ -z "$llastsnap" ] ||  [ "$ldayofweek" -eq 0 ]; } && [ "$llabel" = "weekly" ]; then
-                        llabel="$llabel""-""$ldate"
+                    elif { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofweek" -eq 0 ]; } && [ "$strtBckpMchn_label" = "weekly" ]; then
+                        strtBckpMchn_label="$strtBckpMchn_label""-""$strtBckpMchn_date"
                         break
                     else
                         continue
                     fi
                 else
-                    llabel="$llabel-$ldate"
+                    strtBckpMchn_label="$strtBckpMchn_label-$strtBckpMchn_date"
                     break
                 fi
 
             done
-            # TODO Pre and post scripts for the snapshots
-            snapshotZFS "$ldataset" "$llabel" "$lrecursive"
-            mountZFSSnapshot "$lsnapmountbasedir" "$ldataset" "$llabel" "$lrecursive"
-            lborgpurgeopts="$lborgpurgeopts --keep-$llabel=$lkeepduration"
+            # [ ] TODO Pre and post scripts for the snapshots
+            snapshotZFS "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
+            mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
+            strtBckpMchn_borgpurgeopts="$strtBckpMchn_borgpurgeopts --keep-$strtBckpMchn_label=$strtBckpMchn_keepduration"
 
-            for repo in $lrepolist; do
-                repo=$(echo "$repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            for strtBckpMchn_repo in $strtBckpMchn_repolist; do
+                strtBckpMchn_repo=$(echo "$strtBckpMchn_repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 # now we check if the current repo has to be skipped
-                #TODO changing REPOSKIP from global to local variable
-                if { [ "${repo#ssh://}" != "$repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
-                    { [ "${repo#ssh://}" = "$repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
+                # [ ] TODO changing REPOSKIP from global to local variable
+                if { [ "${strtBckpMchn_repo#ssh://}" != "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
+                    { [ "${strtBckpMchn_repo#ssh://}" = "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
 
-                    if ! direxists "$repo"; then
-                        msg "INFO" "Creating repo directory: $repo"
-                        dircreate "$repo"
-                        msg "INFO" "Init Borg repo: $repo"
-                        initBorg "$repo" # TODO Add Borg remote command
+                    if ! direxists "$strtBckpMchn_repo"; then
+                        msg "INFO" "Creating repo directory: $strtBckpMchn_repo"
+                        dircreate "$strtBckpMchn_repo"
+                        msg "INFO" "Init Borg repo: $strtBckpMchn_repo"
+                        initBorg "$strtBckpMchn_repo" # [ ] TODO Add Borg remote command
                     fi
-                    #TODO Take into account recursive snaps
-                    createBorg "$repo" "$llabel" "$lborgrepoopts" "$ldataset" # TODO Add Borg remote command
-                    pruneBorg "$repo" "$lborgpurgeopts"                       # TODO Add Borg remote command
-                    pruneZFSSnapshot "$ldataset" "$llabel" "$lkeepduration"   
+                    # [ ] TODO Take into account recursive snaps
+                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_dataset" # [ ] TODO Add Borg remote command
+                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgpurgeopts"                       # [ ] TODO Add Borg remote command
+                    pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration"   
                 fi
             done
 
-            umountZFSSnapshot "$lsnapmountbasedir" "$ldataset"
+            umountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset"
 
             
         done
         IFS="$OLD_IFS"
 
-        unset linterval
-        unset ldataset
-        unset repo
-        unset lfslist
-        unset lrepolist
-        unset lintervallist
-        unset lborgrepoopts
-        unset lborgpurgeopts
-        unset lsnapmountbasedir
-        unset llabel
-        unset llastsnap       
-        unset lkeepduration
-        unset lrecursive
-        unset ldate
-        unset ldayofweek
-        unset ldayofmonth
+        unset strtBckpMchn_interval
+        unset strtBckpMchn_dataset
+        unset strtBckpMchn_repo
+        unset strtBckpMchn_lfslist
+        unset strtBckpMchn_repolist
+        unset strtBckpMchn_intervallist
+        unset strtBckpMchn_borgrepoopts
+        unset strtBckpMchn_borgpurgeopts
+        unset strtBckpMchn_snapmountbasedir
+        unset strtBckpMchn_label
+        unset strtBckpMchn_lastsnap       
+        unset strtBckpMchn_keepduration
+        unset strtBckpMchn_recursive
+        unset strtBckpMchn_date
+        unset strtBckpMchn_dayofweek
+        unset strtBckpMchn_dayofmonth
     }
-    execBackup(){
-        LASTFUNC="execBackup"
 
-
-          # $1 - volume, i.e. zroot/home
-            # $2 - label, i.e. monthly-20170602
-            # Expects localdir, remotedir, BINDDIR
-            LASTFUNC="dobackup"
-            msg "------ $(date) ------"
-            bind_dir="${BINDDIR}/${1}"
-            exec_cmd mkdir -p "$bind_dir"
-            msg "DEBUG" "bind_dir is: $bind_dir" 
-            exec_cmd mount -t zfs "${1}@${2}" "$bind_dir"
-            if [ "$RECURSIVE" = "true" ]; then
-                recursivezfsmount "$1" "$2"
-            fi
-            BORG_OPTS="--info --stats --compression $COMPRESS --files-cache $CACHEMODE --exclude-if-present .noborg"
-            if [ "$localdir" != "" ] && [ "$LOCALSKIP" != "true" ]; then
-                echo "Doing local backup of ${1}@${2}"
-                # shellcheck disable=SC2086
-                borg create $BORG_OPTS "${localdir}::${2}" "$bind_dir"
-                if [ "$LOCAL_READABLE_BY_OTHERS" = "true" ]; then
-                echo "Set read permissions for others"
-                chmod +rx "${localdir}" -R
-                fi
-            else
-                msg "INFO" "Skipping local backup"
-            fi
-            if [ "$remotedir" != "" ]; then
-                echo "Doing remote backup of ${1}@${2}"
-                # shellcheck disable=SC2086
-                borg create $BORG_OPTS --remote-path="${BORGPATH}" "${remotedir}::${2}" "$bind_dir"
-            fi
-            if [ "$RECURSIVE" = "true" ]; then
-                recursivezfsumount "$1" "$2"
-            fi
-
-            umount -n "$bind_dir"        
-
-
-    }    
     
 
 fi
