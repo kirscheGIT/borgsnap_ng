@@ -138,7 +138,7 @@ EOF
 
 
 
-# [ ] TODO: Modifiy to check if borg user is used
+# [ ] TODO: #22 Modifiy to check if borg user is used
 #[ "$(id -u)" -eq 0 ] || die "Must be run as root"
 #[ "$(id -un)" = "root" ] || die "Must be run as root"
 # username=$(id -un)
@@ -538,7 +538,7 @@ case "$1" in
 esac
 
 exit
-# [ ] TODO: readconfigfile before backup run?
+# [ ] TODO: #23 readconfigfile before backup run?
 # [ ] TODO: Change the IFS and trim whitespaces
 # # Original IFS value
 # OLD_IFS="$IFS"

@@ -20,7 +20,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         }
         export MSG_DEFINED=1
     fi
-#[ ] TODO Rename local variables to unique names / complete rework to reflect the changes made in the whole process
+#[ ] TODO #19 Rename local variables to unique names / complete rework to reflect the changes made in the whole process
     set -u
     msg "DEBUG" "-----------------------------------------------"
     msg "msg_and_err_hdlr.sh invoked"
@@ -39,7 +39,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         # shellcheck disable=SC1090
         . "$lconfigfile"
 
-        # [ ] TODO: Modifiy to check if borg user is used
+        # [ ] TODO: #20 Modifiy to check if borg user is used
         #[ "$(id -u)" -eq 0 ] || die "Must be run as root"
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
@@ -92,7 +92,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "Remote ssh config is: $REMOTESSHCONFIG"
         export REMOTEDIRPSX="$REMOTE_DIR_PSX"
 
-        # [ ] TODO: Check $FS variable if empty
+        # [ ] TODO: #21 Check $FS variable if empty
 
         unset lconfigfile
 
