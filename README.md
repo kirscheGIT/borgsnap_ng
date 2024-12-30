@@ -1,24 +1,16 @@
 # borgsnap_ng is a POSIX compatible fork of borgsnap Backups using ZFS snapshots, borg, and (optionally) remote borg servers like rsync.net, hetzner, ...
 
-[ ] TODO: Update README  
-[ ] TODO: Update pre and postscripts  
-[ ] TODO: Sanity check for parameters passed over to funcitons (only partially implemented)  
-[ ] TODO: Abstract ZFS calls to support other FS like btrfs in the future  
-[ ] TODO: Provide Testscripts and files  
-[ ] TODO: Refactor DEBUG and Status Messages  
-[ ] TODO: Provide systemd configuration for timetriggeresd execution and status mails  
-[ ] TODO: Testmatrix - OS - Filesystem - Borg  
-[ ] TODO: Provide installation scripts - Setting borg user as zfs snapshot user,    
+[ ] TODO: #10 Update README  
+[ ] TODO: #11 Update pre and postscripts  
+[ ] TODO: #12 Sanity check for parameters passed over to funcitons (only partially implemented)  
+[ ] TODO: #13 Abstract ZFS calls to support other FS like btrfs in the future  
+[ ] TODO: #14 Provide Testscripts and files  
+[ ] TODO: #15 Refactor DEBUG and Status Messages  
+[ ] TODO: #16 Provide systemd configuration for timetriggeresd execution and status mails  
+[ ] TODO: #17 Testmatrix - OS - Filesystem - Borg  
+[ ] TODO: #18 Provide installation scripts - Setting borg user as zfs snapshot user,    
 
-# bckp_hdlr.sh
-  [ ] TODO set Basedir to Borg defaults  
-  [ ] TODO Pre and post scripts for the snapshots  
-  [ ] TODO Add Borg Remote command
-  [ ] TODO changing REPOSKIP from global to local variable  
-  [ ] TODO Take into account recursive snaps  
 
-  
-[ ] TODO: ...  
 
 This fork adds:
 
