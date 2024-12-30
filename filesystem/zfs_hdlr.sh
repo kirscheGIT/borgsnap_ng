@@ -41,57 +41,57 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "Number of parameters for function: $# "
 
         LASTFUNC="getZFSSnapshot"
-        ldataset="$1"
-        ldate="$2"
-        llistParameter=""
-        lStrContainsDate=1
+        getZFSSnap_dataset="$1"
+        getZFSSnap_date="$2"
+        getZFSSnap_listParameter=""
+        getZFSSnap_StrContainsDate=1
 
-        chkDateStr "$ldate"
-        lStrContainsDate=$?
-        msg "DEBUG" "lStrContainsDate = $lStrContainsDate"
+        chkDateStr "$getZFSSnap_date"
+        getZFSSnap_StrContainsDate=$?
+        msg "DEBUG" "getZFSSnap_StrContainsDate = $getZFSSnap_StrContainsDate"
         # check the vlaidity of the parameters 2 and 3  
-        if { [ "$#" -ne 3 ] && [ "$#" -ne 2 ]; } || [ "$lStrContainsDate" = 2 ]; then
-            if [ "$lStrContainsDate" = 2 ]; then
-                msg "ERROR" "No valid date or interval string provided: $ldate "
+        if { [ "$#" -ne 3 ] && [ "$#" -ne 2 ]; } || [ "$getZFSSnap_StrContainsDate" = 2 ]; then
+            if [ "$getZFSSnap_StrContainsDate" = 2 ]; then
+                msg "ERROR" "No valid date or interval string provided: $getZFSSnap_date "
             else
                 msg "ERROR" "Wrong number of parameters for function: $# "
             fi
-            unset ldataset
-            unset ldate
-            unset llistParameter
-            unset lStrContainsDate
+            unset getZFSSnap_dataset
+            unset getZFSSnap_date
+            unset getZFSSnap_listParameter
+            unset getZFSSnap_StrContainsDate
             return 1
 
         elif [ "$#" -eq 3 ]; then
-            llistParameter="$3"          
+            getZFSSnap_listParameter="$3"          
         fi
         
 
-        if { [ -z "$llistParameter" ] || [ "$#" -eq 2 ]; } && [ "$lStrContainsDate" = 0 ]; then # Get a single snapshot by name
+        if { [ -z "$getZFSSnap_listParameter" ] || [ "$#" -eq 2 ]; } && [ "$getZFSSnap_StrContainsDate" = 0 ]; then # Get a single snapshot by name
             msg "DEBUG" "We are in the First branch."
-            exec_cmd zfs list -t snapshot -o name | grep "${1}@${2}"
-        elif [ "$llistParameter" = "LATEST" ]; then # Get the latest snapshot of a given backup intervall
+            exec_cmd zfs list -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}"
+        elif [ "$getZFSSnap_listParameter" = "LATEST" ]; then # Get the latest snapshot of a given backup intervall
             msg "DEBUG" "We are in the LATEST branch."
-            exec_cmd zfs list -t snapshot -o name | grep "${ldataset}@${ldate}-" | sort -nr | head -1 # Get a list of the snapshots of a given backup intervall
-        elif [ "$llistParameter" = "ALL" ]; then
+            exec_cmd zfs list -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -nr | head -1 # Get a list of the snapshots of a given backup intervall
+        elif [ "$getZFSSnap_listParameter" = "ALL" ]; then
             msg "DEBUG" "We are in the All branch"
-            exec_cmd zfs list -t snap -o name | grep "${ldataset}@${ldate}-" | sort -nr
+            exec_cmd zfs list -t snap -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -nr
         else
-            if [ -n "$llistParameter" ]; then
-                msg "ERROR" "Wrong keyword for function: $llistParameter "
+            if [ -n "$getZFSSnap_listParameter" ]; then
+                msg "ERROR" "Wrong keyword for function: $getZFSSnap_listParameter "
             fi
-            unset ldataset
-            unset ldate
-            unset llistParameter
-            unset lStrContainsDate
+            unset getZFSSnap_dataset
+            unset getZFSSnap_date
+            unset getZFSSnap_listParameter
+            unset getZFSSnap_StrContainsDate
             return 1
         fi
         
  
-        unset ldataset
-        unset ldate
-        unset llistParameter
-        unset lStrContainsDate
+        unset getZFSSnap_dataset
+        unset getZFSSnap_date
+        unset getZFSSnap_listParameter
+        unset getZFSSnap_StrContainsDate
         return 0
     }
 
@@ -102,32 +102,32 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="lastZFSSnapshot"
-        ldataset="$1"
-        ldate="$2"
+        lastZFSSnap_dataset="$1"
+        lastZFSSnap_date="$2"
 
-        exec_cmd zfs list -t snap -o name | grep "${ldataset}@${ldate}-" | sort -nr
+        exec_cmd zfs list -t snap -o name | grep "${lastZFSSnap_dataset}@${lastZFSSnap_date}-" | sort -nr
 
-        unset ldataset
-        unset ldate
+        unset lastZFSSnap_dataset
+        unset lastZFSSnap_date
     }
 
     snapshotZFS() {
         # $1 - mandatory ZFS dataset
         # $2 - mandatory ZFS snapshot label
         LASTFUNC="snapshotZFS"
-        ldataset="$1"
-        llabel="$2"
-        lrecursive="$3"
+        snapshotZFS_dataset="$1"
+        snapshotZFS_label="$2"
+        snapshotZFS_recursive="$3"
 
 
-        if [ -n "$(getZFSSnapshot "$ldataset" "$llabel")" ]; then
-            msg "WARNING" "ZFS Snapshot for dataset $ldataset @ label $llabel exists!"
+        if [ -n "$(getZFSSnapshot "$snapshotZFS_dataset" "$snapshotZFS_label")" ]; then
+            msg "WARNING" "ZFS Snapshot for dataset $snapshotZFS_dataset @ label $snapshotZFS_label exists!"
             msg "WARNING" "Assuming last Borg run didn't finish - restarting Borg"
         else
-            if [ "$lrecursive" = "r" ] || [ "$lrecursive" = "R" ] ; then
-                exec_cmd zfs snapshot -r "$ldataset@$llabel"
+            if [ "$snapshotZFS_recursive" = "r" ] || [ "$snapshotZFS_recursive" = "R" ] ; then
+                exec_cmd zfs snapshot -r "$snapshotZFS_dataset@$snapshotZFS_label"
             else
-                exec_cmd zfs snapshot "$ldataset@$llabel"
+                exec_cmd zfs snapshot "$snapshotZFS_dataset@$snapshotZFS_label"
             fi
             # Check if the snapshot operation is still running
             # depending on the system load and disk speed this might take longer than
@@ -137,74 +137,98 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
                     echo "Waiting for the snapshot operation to complete..."
                     sleep 5  #Sleep for a short time before checking again
             done
-            msg "INFO" "Snapshot operation for dataset $ldataset @ label $llabel finished."
+            msg "INFO" "Snapshot operation for dataset $snapshotZFS_dataset @ label $snapshotZFS_label finished."
         fi
 
-        unset lrecursive
-        unset ldataset
-        unset llabel
+        unset snapshotZFS_recursive
+        unset snapshotZFS_dataset
+        unset snapshotZFS_label
         return 0
     }    
 
-    destroysnapshot() {
-        if [ "$RECURSIVE" = "true" ]; then
-            echo "Recursive snapshot ${1}@${2}"
-            zfs destroy -r "${1}@${2}"
+    pruneZFSSnapshot() {
+        pruneZFS_dataset="$1"
+        pruneZFS_label="$2"
+        pruneZFS_keepduration="$3"
+       # pruneZFS_recursive="$4"
+
+        pruneZFS_TotalNumberOfSnapshots=""
+        pruneZFS_Delete=""
+
+        LASTFUNC="pruneZFSSnapshot"
+
+        pruneZFS_label="${pruneZFS_label%-*}"
+        pruneZFS_TotalNumberOfSnapshots=$(getZFSSnapshot "$pruneZFS_dataset" "$pruneZFS_label" "ALL" | wc -l)
+
+        msg "------ $(date) ------"
+        if [ "$pruneZFS_TotalNumberOfSnapshots" -le "$pruneZFS_keepduration" ]; then
+            msg "INFO" "No old backups to purge"
         else
-            echo "Snapshot ${1}@${2}"
-            zfs destroy "${1}@${2}"
+            pruneZFS_Delete=$((pruneZFS_TotalNumberOfSnapshots - pruneZFS_keepduration))
+            msg "INFO" "Keep: $pruneZFS_keepduration, found: $pruneZFS_TotalNumberOfSnapshots, will delete $pruneZFS_Delete"
+            for i in $(findall "$pruneZFS_dataset" "$pruneZFS_label" | tail -n "$pruneZFS_Delete"); do
+                msg "INFO" "Purging old snapshot $i"
+                exec_cmd zfs destroy -r "$i"
+                while pgrep -f "zfs destroy" > /dev/null; do
+                    msg "INFO" "Waiting for the destroy operation to complete..."
+                    sleep 1  #Sleep for a short time before checking again
+                done
+                msg "INFO" "Purge of old Snapshot finished"
+            done
         fi
+        
+        unset pruneZFS_TotalNumberOfSnapshots
+        unset pruneZFS_Delete
+        unset pruneZFS_dataset
+        unset pruneZFS_label
+        unset pruneZFS_keepduration
+        #unset pruneZFS_recursive
 
-        # Check if the destroy operation is still running
-        while pgrep -f "zfs destroy" > /dev/null; do
-            echo "Waiting for the destroy operation to complete..."
-            sleep 5  #Sleep for a short time before checking again
-        done
-
-        echo "Destroy operation has completed."
-    }
+    }   
 
     mountZFSSnapshot() {
-        lsnapmountbasedir="$1"
-        ldataset="$2"
-        llabel="$3"
-        lrecursive="$4"
+        mountZFS_snapmountbasedir="$1"
+        mountZFS_dataset="$2"
+        mountZFS_label="$3"
+        mountZFS_recursive="$4"
 
-        dircreate "$lsnapmountbasedir/$ldataset"
+        LASTFUNC="mountZFSSnapshot"
+
+        dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
        # exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
         #TODO test the recursive snapshot mount 
         #TODO Idea: Test if a "no mount" list can be used or provided - background: The recursive option takes a snapshot for all subvolumes
         # at the same time. But maybe we don't want to backup all of them
         #TODO put the mount and umount scripts to separate files and set the setuid bit for those scripts, making it possible for the borg
-        # user to mount and unmount fiels. (Is this also be needede for the createdir functions?) 
-        if [ "$lrecursive" = "r" ] || [ "$lrecursive" = "R" ] ; then
-            for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$ldataset" | grep "@$llabel$" | sed -e "s@^$ldataset@@" -e "s/@$llabel$//"); do
-                msg "INFO" "Mounting child filesystem snapshot: $ldataset$R@$llabel"
-                dircreate "$lsnapmountbasedir/$ldataset$R"
-                exec_cmd mount -t zfs "$ldataset$R@$llabel" "$lsnapmountbasedir/$ldataset$R"
+        # user to mount and unmount snapshots. (Is this also be needed for the createdir functions?) 
+        if [ "$mountZFS_recursive" = "r" ] || [ "$mountZFS_recursive" = "R" ] ; then
+            for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$mountZFS_dataset" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do
+                msg "INFO" "Mounting child filesystem snapshot: $mountZFS_dataset$R@$mountZFS_label"
+                dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
+                exec_cmd mount -t zfs "$mountZFS_dataset$R@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
             done
         else
-            dircreate "$lsnapmountbasedir/$ldataset"
-            exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
+            dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
+            exec_cmd mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
         fi
 
-        unset lsnapmountbasedir
-        unset ldataset
-        unset llabel
-        unset lrecursive
+        unset mountZFS_snapmountbasedir
+        unset mountZFS_dataset
+        unset mountZFS_label
+        unset mountZFS_recursive
 
     }
 
     
     umountZFSSnapshot() {
-        lsnapmountbasedir="$1"
-        ldataset="$2"
+        mountZFS_snapmountbasedir="$1"
+        mountZFS_dataset="$2"
  
-
+        LASTFUNC="unmountZFSSnapshot"
                
 
         # Find all directories under the mount point and unmount them
-        find "$lsnapmountbasedir/$ldataset" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
+        find "$mountZFS_snapmountbasedir/$mountZFS_dataset" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
             umount "$fs" && echo "Unmounted $fs" || echo "Failed to unmount $fs"
             exec_cmd rmdir "$fs" #cleanup mount points
         done
@@ -215,8 +239,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         #done
     }
 
-        unset lsnapmountbasedir
-        unset ldataset
+        unset mountZFS_snapmountbasedir
+        unset mountZFS_dataset
 
 
 fi

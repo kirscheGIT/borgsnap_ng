@@ -27,6 +27,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     msg "DEBUG" "sourced checkdirexists.sh"
     msg "DEBUG" "-----------------------------------------------"
     
+#TODO Rename local variables to unique names
+
     direxists(){
         # $1 - target directory to be created
         # Strings that work at exampel:

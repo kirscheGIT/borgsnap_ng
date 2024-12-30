@@ -26,10 +26,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
     msg "DEBUG" "sourced bckp_hdlr.sh"
 
     #TODO mount zfs
-    #TODO recursive ZFS snap and mount / recursive mount is done
-    #TODO unmount
     #TODO in case of error exit do an unmount of zfs
-
+    #TODO implement ZFS snapshot clean up aka. destroy
 
     startBackupMachine(){
         LASTFUNC="startBackupMachine"
@@ -128,6 +126,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     #TODO Take into account recursive snaps
                     createBorg "$repo" "$llabel" "$lborgrepoopts" "$ldataset" # TODO Add Borg remote command
                     pruneBorg "$repo" "$lborgpurgeopts"                       # TODO Add Borg remote command
+                    pruneZFSSnapshot "$ldataset" "$llabel" "$lkeepduration"   
                 fi
             done
 

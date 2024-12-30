@@ -26,6 +26,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
     msg "DEBUG" "sourced borg_hdlr.sh"
     msg "DEBUG" "-----------------------------------------------"
     
+    #TODO Rename local variables to unique names
     
     initBorg(){
         # $1 - mandatory list of repo paths
@@ -54,10 +55,11 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 set -e
             fi
         done
-
+        
         unset lborgpath
         unset lremotepath
         unset lpathlist
+        return 0
     }
 
     createBorg(){
@@ -103,6 +105,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset lborgpath
         unset llocalpath
         unset lremotepath
+        return 0
 
     }
 
@@ -146,7 +149,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset lborgopts
         unset lborgpath
         unset lremotepath
-
+        return 0
     }
 
 fi

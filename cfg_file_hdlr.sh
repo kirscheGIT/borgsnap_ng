@@ -20,7 +20,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         }
         export MSG_DEFINED=1
     fi
-
+#TODO Rename local variables to unique names / complete rework to reflect the changes made in the whole process
     set -u
     msg "DEBUG" "-----------------------------------------------"
     msg "msg_and_err_hdlr.sh invoked"

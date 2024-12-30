@@ -89,7 +89,7 @@ export MSG_DEFINED
 export MSG_LEVEL=5
 export ERR_HDLR_DEFINED
 
-. ./msg_and_err_hdlr.sh
+. ./common/msg_and_err_hdlr.sh
 
 if [ -z "${ERR_HDLR_DEFINED+x}" ]; then
   die() {
