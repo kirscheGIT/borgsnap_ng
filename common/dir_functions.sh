@@ -7,7 +7,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     export REMOTE_DIR_FUNCTION_SCRIPT_SOURCED=1    
     set +e
     #set -x
-    . ../common/msg_and_err_hdlr.sh # [ ] TODO #25 Wrong path @kirscheGIT
+    . ./msg_and_err_hdlr.sh # [X] TODO #25 Wrong path @kirscheGIT
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
