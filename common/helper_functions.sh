@@ -5,7 +5,7 @@
 if [ -z "${HELPER_FUNCTIONS_SOURCED+x}" ]; then
     export HELPER_FUNCTIONS_SOURCED=1  
     
-    . ./msg_and_err_hdlr.sh 
+    . ./common/msg_and_err_hdlr.sh 
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
