@@ -113,6 +113,8 @@ fi
 ####################################################################################
 
 . ./common/dir_functions.sh
+. ./filesystem/zfs_hdlr.sh
+. ./filesystem/zfs_snap_mount.sh
 . ./cfg_file_hdlr.sh
 
 msg "DEBUG" "$PATH"
