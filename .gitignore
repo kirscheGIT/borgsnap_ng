@@ -4,6 +4,5 @@ server_store.key
 client_images.key
 server*.conf
 *.key
-test*
 UNSORTED_INFO.md
-test*.sh
+/scratch/
