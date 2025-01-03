@@ -7,7 +7,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     export REMOTE_DIR_FUNCTION_SCRIPT_SOURCED=1    
     set +e
     #set -x
-    . ./common/msg_and_err_hdlr.sh # [X] TODO #25 Wrong path @kirscheGIT
+    . "$(pwd)"/common/msg_and_err_hdlr.sh # [X] TODO #25 Wrong path @kirscheGIT
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
@@ -24,7 +24,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
     fi
     
     msg "DEBUG" "-----------------------------------------------"
-    msg "DEBUG" "sourced checkdirexists.sh"
+    msg "DEBUG" "sourced dir_functions.sh"
     msg "DEBUG" "-----------------------------------------------"
     
 

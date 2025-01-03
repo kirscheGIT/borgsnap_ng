@@ -5,8 +5,9 @@
 if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
     export ZFS_SNAP_MOUNT_SOURCED=1  
     set +e
-    . ../common/msg_and_err_hdlr.sh
-    . ../common/helper_functions.sh
+
+    . "$(pwd)"/common/msg_and_err_hdlr.sh
+    . "$(pwd)"/common/helper_functions.sh
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
@@ -27,6 +28,7 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
     msg "DEBUG" "sourced zfs_snap_mount.sh"
     msg "DEBUG" "-----------------------------------------------"
 
+    
     mountZFSSnapshot() {
         mountZFS_snapmountbasedir="$1"
         mountZFS_dataset="$2"
