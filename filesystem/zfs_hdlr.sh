@@ -5,8 +5,8 @@
 if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
     export ZFS_HDLR_SOURCED=1  
     set +e
-    . ../common/msg_and_err_hdlr.sh
-    . ../common/helper_functions.sh
+    . "$(pwd)"/common/msg_and_err_hdlr.sh
+    . "$(pwd)"/common/helper_functions.sh
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
