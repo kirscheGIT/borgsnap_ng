@@ -43,14 +43,15 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         #[ "$(id -u)" -eq 0 ] || die "Must be run as root"
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
+        # [ ] TODO: #31 Automated creation of the PASS file if not existend? @kirscheGIT
         BORG_PASSPHRASE=$(cat "$PASS")
         export BORG_PASSPHRASE
         
         [ "$BORG_PASSPHRASE" != "" ] || die "Unable to read passphrase from file $PASS"
 
-        if [ "$LOCAL" != "" ]; then
-            [ -d "$LOCAL" ] || die "Non-existent output directory $LOCAL"
-        fi
+       # if [ "$LOCAL" != "" ]; then
+       ##     [ -d "$LOCAL" ] || die "Non-existent output directory $LOCAL"
+       ## fi
         
         scriptpath="$(cd -- "$(dirname "$0")" >/dev/null 2>&1 || exit; pwd -P)"
         msg "INFO" "$LASTFUNC: scriptpath is $scriptpath/$PRE_SCRIPT"
@@ -64,6 +65,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             [ -x "$POST_SCRIPT" ] || die "POST_SCRIPT specified but could not be executed (run command: chmod +x $POST_SCRIPT)"
         fi
 
+        # [ ] TODO: #30 BASEDIR logic needs a rework @kirscheGIT
         if [ "$BASEDIR" != "" ]; then
             if [ -d "$BASEDIR" ]; then
                 BORG_BASE_DIR="$BASEDIR"
@@ -88,11 +90,67 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             msg "INFO" "REMOTE_BORG_COMMAND set to $BORGPATH"
         fi
 
-        export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
-        msg "DEBUG" "Remote ssh config is: $REMOTESSHCONFIG"
-        export REMOTEDIRPSX="$REMOTE_DIR_PSX"
+        if [ "$LOCAL_READABLE_BY_OTHERS" = "" ]; then
+            export LOCAL_READABLE_BY_OTHERS="false"
+            msg "INFO" "LOCAL_READABLE_BY_OTHERS not configured, defaulting to false"
+        else
+            export LOCAL_READABLE_BY_OTHERS
+            msg "INFO" "LOCAL_READABLE_BY_OTHERS set to $LOCAL_READABLE_BY_OTHERS"
+        fi
 
-        # [ ] TODO: #21 Check $FS variable if empty
+        if [ "$COMPRESS" = "" ]; then
+            export COMPRESS="zstd,8"
+            msg "INFO" "COMPRESS not configured, defaulting to zstd,8"
+        else
+            export COMPRESS
+            msg "INFO" "COMPRESS set to $COMPRESS"
+        fi
+
+        if [ "$REPOLIST" != "" ]; then
+            export REPOLIST
+            msg "INFO" "Repolist configured: $REPOLIST "
+        else
+            die "Empty REPOLIST in $lconfigfile"
+        fi
+
+        if [ "$REPOSKIP" = "" ]; then
+            export REPOSKIP="NONE"
+            msg "INFO" "REPOSKIP not configured, defaulting to NONE"
+        else
+            export REPOSKIP
+            msg "INFO" "REPOSKIP set to $REPOSKIP"
+        fi
+        
+        if [ "$RETENTIONPERIOD" != "" ]; then
+            export RETENTIONPERIOD
+            msg "INFO" "Repolist configured: $RETENTIONPERIOD "
+        else
+            die "Empty RETENTIONPERIOD in $lconfigfile"
+        fi
+
+        if [ "$FS" != "" ]; then
+            export FS
+            msg "INFO" "Filesystems configured: $FS "
+        else
+            die "Empty FS in $lconfigfile"
+        fi
+
+
+
+        # export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
+        # msg "DEBUG" "Remote ssh config is: $REMOTESSHCONFIG"
+        # export REMOTEDIRPSX="$REMOTE_DIR_PSX"
+
+        # [x] TODO: #21 Check $FS variable if empty
+        # [x] TODO: #29 Read the following parameters @kirscheGIT
+        # LOCAL_READABLE_BY_OTHERS -> DEFAULT = false
+        # COMPRESS -> DEFAULT = "zstd,8"
+        # REPOLIST -> No Default - Throw error if empty
+        # REPOSKIP -> DEFAULT = "NONE"
+        # RETENTIONPERIOD -> No Default - Throw error if empty
+
+
+
 
         unset lconfigfile
 

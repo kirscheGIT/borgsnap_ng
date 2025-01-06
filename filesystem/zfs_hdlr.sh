@@ -1,5 +1,5 @@
 #!/bin/sh
-# cfg_file_hdlr.sh  - licensed under GPLv3. See the LICENSE file for additional
+# zfs_hdlr.sh  - licensed under GPLv3. See the LICENSE file for additional
 # details.
 # shellcheck disable=SC3043
 if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then

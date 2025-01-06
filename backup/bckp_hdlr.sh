@@ -133,6 +133,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         done
         IFS="$OLD_IFS"
 
+        unset OLD_IFS
         unset strtBckpMchn_interval
         unset strtBckpMchn_dataset
         unset strtBckpMchn_repo
