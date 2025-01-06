@@ -5,7 +5,7 @@
 if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
     export CFG_FILE_HDLR_SOURCED=1  
     
-    . ./common/msg_and_err_hdlr.sh
+    . "$(pwd)"/common/msg_and_err_hdlr.sh
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""

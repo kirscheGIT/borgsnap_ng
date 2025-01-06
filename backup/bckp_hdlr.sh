@@ -5,7 +5,7 @@
 if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
     export BCKP_HDLR_SOURCED=1  
     
-    . ../common/msg_and_err_hdlr.sh
+    . "$(pwd)"/common/msg_and_err_hdlr.sh
     
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
@@ -40,7 +40,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         strtBckpMchn_keepduration=""
         strtBckpMchn_recursive=""
 
-        if [ -z "$strtBckpMchn_borgreopopts" ]; then
+        if [ -z "$strtBckpMchn_borgrepoopts" ]; then
             strtBckpMchn_borgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
         fi
         if [ -z "$strtBckpMchn_borgpurgeopts" ]; then
@@ -86,8 +86,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 strtBckpMchn_keepduration=$(echo "$strtBckpMchn_interval" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
                 
                 if [ "$strtBckpMchn_label" = "monthly" ] || [ "$strtBckpMchn_label" = "weekly" ]; then
-                    strtBckpMchn_lastsnap=$(getZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "LAST")
-                    if { [ -z "$vlastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq 1 ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
+                    strtBckpMchn_lastsnap=$(getZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "LATEST")
+                    if { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq 1 ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
                         strtBckpMchn_label="$strtBckpMchn_label""-""$strtBckpMchn_date"
                         break
                     elif { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofweek" -eq 0 ]; } && [ "$strtBckpMchn_label" = "weekly" ]; then
