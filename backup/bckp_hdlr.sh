@@ -47,7 +47,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             strtBckpMchn_borgpurgeopts="--info --stats"
         fi
         if [ -z "$strtBckpMchn_snapmountbasedir" ]; then
-            strtBckpMchn_snapmountbasedir="/run/borgsnap_ng/" # [ ] TODO #3 set to Borg defaults
+            strtBckpMchn_snapmountbasedir="/tmp/borgsnap_ng/" # [ ] TODO #3 set to Borg defaults
         fi
 
 
