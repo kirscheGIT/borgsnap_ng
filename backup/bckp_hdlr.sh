@@ -41,13 +41,13 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         strtBckpMchn_recursive=""
 
         if [ -z "$strtBckpMchn_borgrepoopts" ]; then
-            strtBckpMchn_borgrepoopts="--info --stats --compression auto,zstd,9 --files-cache ctime,size,inode"
+            strtBckpMchn_borgrepoopts="--info --stats --compression=auto,zstd,9 --files-cache=ctime,size,inode"
         fi
         if [ -z "$strtBckpMchn_borgpurgeopts" ]; then
             strtBckpMchn_borgpurgeopts="--info --stats"
         fi
         if [ -z "$strtBckpMchn_snapmountbasedir" ]; then
-            strtBckpMchn_snapmountbasedir="/tmp/borgsnap_ng/" # [ ] TODO #3 set to Borg defaults
+            strtBckpMchn_snapmountbasedir="/tmp/borgsnap_ng" # [ ] TODO #3 set to Borg defaults
         fi
 
 
@@ -59,7 +59,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         strtBckpMchn_dayofweek=$(exec_cmd date +"%w")
         strtBckpMchn_dayofmonth=$(exec_cmd date +"%d")
 
-        if ! direxists "$strtBckpMchn_snapmountbasedir"; then
+        if ! direxists "$strtBckpMchn_snapmountbasedir" ; then
             msg "INFO" "Creating snap mount directory: $strtBckpMchn_snapmountbasedir"
             dircreate "$strtBckpMchn_snapmountbasedir"
         fi
@@ -105,7 +105,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # [ ] TODO #4 Pre and post scripts for the snapshots
             snapshotZFS "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
-            strtBckpMchn_borgpurgeopts="$strtBckpMchn_borgpurgeopts --keep-$strtBckpMchn_label=$strtBckpMchn_keepduration"
+            strtBckpMchn_borgpurgeopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration"
 
             for strtBckpMchn_repo in $strtBckpMchn_repolist; do
                 strtBckpMchn_repo=$(echo "$strtBckpMchn_repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
@@ -118,15 +118,19 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         msg "INFO" "Creating repo directory: $strtBckpMchn_repo"
                         dircreate "$strtBckpMchn_repo"
                         msg "INFO" "Init Borg repo: $strtBckpMchn_repo"
-                        initBorg "$strtBckpMchn_repo" # [ ] TODO #6 Add Borg remote command
+                        initBorg "$strtBckpMchn_repo" "" # [ ] TODO #6 Add Borg remote command
                     fi
                     # [ ] TODO #7 Take into account recursive snaps
-                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_dataset" # [ ] TODO #8 Add Borg remote command
-                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgpurgeopts"                       # [ ] TODO #9 Add Borg remote command
-                    pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration"   
+                    set +e
+                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_dataset" "" # [ ] TODO #8 Add Borg remote command
+                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgpurgeopts" "$strtBckpMchn_label" ""                # [ ] TODO #9 Add Borg remote command
+                    pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration" ""  
                 fi
             done
-
+            msg "DEBUG" "--------------------------------------------------------------"
+            msg "DEBUG" "Snapmount base dir: $strtBckpMchn_snapmountbasedir " 
+            msg "DEBUG" "Snapmount dataset: $strtBckpMchn_dataset "
+            msg "DEBUG" "--------------------------------------------------------------"
             umountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset"
 
             

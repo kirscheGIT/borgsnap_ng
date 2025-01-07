@@ -75,6 +75,9 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
     if [ -z "${ERR_HDLR_DEFINED+x}" ]; then
         ERR_HDLR_DEFINED=1
         err_hdlr() {
+            if [ $LASTFUNC != "unmountZFSSnapshot" ]; then
+               umountZFSSnapshot "/tmp/borgsnap_ng" ""
+            fi
             case "$1" in
                 1) msg "ERROR" "Got exit code 1"  ;;
                 #echo "Error: Command failed with exit status 1." ;;
@@ -86,6 +89,8 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
 
         exec_cmd() {
             lexit_status=
+            exec_cmd_string="$@"
+	        msg "DEBUG" "exec_cmd parameters in $LASTFUNC: $exec_cmd_string"
             "$@"  # Execute the command passed as arguments
             lexit_status="$?"  # Capture the exit status
             msg "DEBUG" "Error status is $lexit_status"

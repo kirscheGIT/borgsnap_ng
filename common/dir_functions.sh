@@ -86,12 +86,14 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="dircreate"
+	OLD_IFS="$IFS"
+        IFS=' '
         dirCreate_tgtdir="$1"
         dirCreate_crtpath=""
         dirCreate_crtcmd=""
-        dirCreate_remotessh=""
+	dirCreate_remotessh=""
         
-        
+        msg "DEBUG" "Path is $PATH"
          if [ -z "$dirCreate_tgtdir" ]; then
             msg "ERROR" "Empty directory string was given!"
             return 2
@@ -110,7 +112,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         else
             msg "DEBUG" "Local directory to test is: $dirCreate_tgtdir"
             dirCreate_crtpath=$dirCreate_tgtdir
-            dirCreate_crtcmd="mkdir -p ";
+            dirCreate_crtcmd="mkdir -p";
         fi
 
         #msg "DEBUG" "Remote dir is $lremotedir"
@@ -123,13 +125,13 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # because the expansion won't work otherwise, we need to disable the
         # check for the next line
         # shellcheck disable=SC2086
-        exec_cmd $dirCreate_crtcmd "$dirCreate_crtpath"
+        eval exec_cmd "$dirCreate_crtcmd" "$dirCreate_crtpath"
 
         unset dirCreate_tgtdir
         unset dirCreate_crtpath
         unset dirCreate_remotessh
         unset dirCreate_crtcmd
-        
+        IFS="$OLD_IFS"
         return 0
     }
 fi

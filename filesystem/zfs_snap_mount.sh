@@ -36,6 +36,8 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         mountZFS_recursive="$4"
 
         LASTFUNC="mountZFSSnapshot"
+	OLD_IFS="$IFS"
+        IFS=' '
 
         dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
        # exec_cmd mount -t zfs "$ldataset@$llabel" "$lsnapmountbasedir/$ldataset"
@@ -48,13 +50,14 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
             for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$mountZFS_dataset" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do
                 msg "INFO" "Mounting child filesystem snapshot: $mountZFS_dataset$R@$mountZFS_label"
                 dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
-                exec_cmd mount -t zfs "$mountZFS_dataset$R@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
+                exec_cmd sudo mount -t zfs "$mountZFS_dataset$R@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
             done
         else
             dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
-            exec_cmd mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
+            exec_cmd sudo mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
         fi
-
+        
+	IFS="$OLD_IFS"
         unset mountZFS_snapmountbasedir
         unset mountZFS_dataset
         unset mountZFS_label
@@ -71,8 +74,9 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
                
 
         # Find all directories under the mount point and unmount them
-        find "$mountZFS_snapmountbasedir/$mountZFS_dataset" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
-            umount "$fs" && echo "Unmounted $fs" || echo "Failed to unmount $fs"
+        #find "$mountZFS_snapmountbasedir/$mountZFS_dataset" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
+        find "$mountZFS_snapmountbasedir" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
+            sudo umount "$fs" && echo "Unmounted $fs" || echo "Failed to unmount $fs"
             exec_cmd rmdir "$fs" #cleanup mount points
         done
 

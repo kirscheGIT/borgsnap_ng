@@ -86,7 +86,7 @@ export BORGPATH="borg1" # "borg1" for rsync.net, otherwise "borg" as appropriate
 # control script messaging/ debugging and error handling
 ####################################################################################
 export MSG_DEFINED
-export MSG_LEVEL=5
+export MSG_LEVEL=2
 export ERR_HDLR_DEFINED
 
 . ./common/msg_and_err_hdlr.sh
@@ -116,6 +116,7 @@ fi
 . ./filesystem/zfs_hdlr.sh
 . ./filesystem/zfs_snap_mount.sh
 . ./backup/bckp_hdlr.sh
+. ./borg/borg_hdlr.sh
 . ./cfg_file_hdlr.sh
 
 msg "DEBUG" "$PATH"
