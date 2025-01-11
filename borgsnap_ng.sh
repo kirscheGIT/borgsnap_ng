@@ -86,7 +86,7 @@ export BORGPATH="borg1" # "borg1" for rsync.net, otherwise "borg" as appropriate
 # control script messaging/ debugging and error handling
 ####################################################################################
 export MSG_DEFINED
-export MSG_LEVEL=2
+export MSG_LEVEL=5
 export ERR_HDLR_DEFINED
 
 . ./common/msg_and_err_hdlr.sh
