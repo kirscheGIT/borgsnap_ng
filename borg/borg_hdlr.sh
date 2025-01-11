@@ -54,11 +54,11 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             msg "DEBUG" "Init Borg path is: $i "
             if [ "${i#ssh://}" != "$i" ]; then
                 msg "DEBUG" "Initialize Remote path"
-                exec_cmd borg init --encryption=repokey "$initBorg_remotepath" "$i"
+                exec_cmd borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i"
                   
                 #set -e
             else
-                exec_cmd borg init --encryption=repokey "$i"  
+                exec_cmd borg init --encryption=repokey --show-rc "$i"  
                 #set -e
             fi
         done

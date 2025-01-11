@@ -88,6 +88,7 @@ export BORGPATH="borg1" # "borg1" for rsync.net, otherwise "borg" as appropriate
 export MSG_DEFINED
 export MSG_LEVEL=5
 export ERR_HDLR_DEFINED
+export BORG_EXIT_CODES=modern
 
 . ./common/msg_and_err_hdlr.sh
 

@@ -41,17 +41,17 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         strtBckpMchn_recursive=""
 
         if [ -z "$strtBckpMchn_borgrepoopts" ]; then
-            strtBckpMchn_borgrepoopts="--info --stats --compression=auto,zstd,9 --files-cache=ctime,size,inode"
+            strtBckpMchn_borgrepoopts="--info --stats --compression=auto,zstd,9 --files-cache=ctime,size,inode --show-rc"
         fi
         if [ -z "$strtBckpMchn_borgpurgeopts" ]; then
-            strtBckpMchn_borgpurgeopts="--info --stats"
+            strtBckpMchn_borgpurgeopts="--info --stats --show-rc"
         fi
         if [ -z "$strtBckpMchn_snapmountbasedir" ]; then
             strtBckpMchn_snapmountbasedir="/tmp/borgsnap_ng" # [ ] TODO #3 set to Borg defaults
         fi
 
 
-
+        msg "Borg exit code is set to $BORG_EXIT_CODES"
         msg "------ $(date) ------"
         
 
@@ -114,12 +114,12 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 if { [ "${strtBckpMchn_repo#ssh://}" != "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
                     { [ "${strtBckpMchn_repo#ssh://}" = "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
 
-                    if ! direxists "$strtBckpMchn_repo"; then
-                        msg "INFO" "Creating repo directory: $strtBckpMchn_repo"
-                        dircreate "$strtBckpMchn_repo"
-                        msg "INFO" "Init Borg repo: $strtBckpMchn_repo"
-                        initBorg "$strtBckpMchn_repo" "" # [ ] TODO #6 Add Borg remote command
-                    fi
+                    # if ! direxists "$strtBckpMchn_repo"; then
+                    #     msg "INFO" "Creating repo directory: $strtBckpMchn_repo"
+                    #     dircreate "$strtBckpMchn_repo"
+                    #     msg "INFO" "Init Borg repo: $strtBckpMchn_repo"
+                    #     initBorg "$strtBckpMchn_repo" "" # [ ] TODO #6 Add Borg remote command
+                    # fi
                     # [ ] TODO #7 Take into account recursive snaps
                     set +e
                     createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_dataset" "" # [ ] TODO #8 Add Borg remote command
