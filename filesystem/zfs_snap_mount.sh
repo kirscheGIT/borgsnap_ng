@@ -36,7 +36,8 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         mountZFS_recursive="$4"
 
         LASTFUNC="mountZFSSnapshot"
-	OLD_IFS="$IFS"
+	    msg " ---- mount snap start IFS = $IFS ------------------"
+        mountZFS_OLD_IFS="$IFS"
         IFS=' '
 
         dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
@@ -57,7 +58,8 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
             exec_cmd sudo mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
         fi
         
-	IFS="$OLD_IFS"
+	    IFS="$mountZFS_OLD_IFS"
+        msg " ---- mount snap end IFS = $IFS ------------------"
         unset mountZFS_snapmountbasedir
         unset mountZFS_dataset
         unset mountZFS_label

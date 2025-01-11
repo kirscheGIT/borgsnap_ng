@@ -94,7 +94,7 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
             "$@"  # Execute the command passed as arguments
             lexit_status="$?"  # Capture the exit status
             msg "DEBUG" "Error status is $lexit_status"
-            if [ "$lexit_status" -ne 0 ]; then
+            if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] ; then
                 err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
             unset lexit_status

@@ -40,6 +40,9 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         dirExists_chkpath=""
         dirExists_chkcmd=""
 
+        dirExists_OLD_IFS="$IFS"
+        IFS=' '
+
         if [ -z "$dirExists_testdir" ]; then
             msg "ERROR" "Empty directory string was given!"
             return 2
@@ -78,6 +81,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset dirExists_chkcmd
             return 1
         fi
+        dirExists_IFS=$OLD_IFS
     }
     
     dircreate() {
@@ -86,12 +90,13 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
         LASTFUNC="dircreate"
-	OLD_IFS="$IFS"
+	    msg " ---- dircreate start IFS = $IFS ------------------"
+        dirCreate_OLD_IFS="$IFS"
         IFS=' '
         dirCreate_tgtdir="$1"
         dirCreate_crtpath=""
         dirCreate_crtcmd=""
-	dirCreate_remotessh=""
+	    dirCreate_remotessh=""
         
         msg "DEBUG" "Path is $PATH"
          if [ -z "$dirCreate_tgtdir" ]; then
@@ -121,7 +126,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         msg "INFO" "Creating Path at path $dirCreate_crtpath"
         msg "INFO" "Create command is $dirCreate_crtcmd"
         # when the ssh mkdir fails, we need the error handler
-        
+        IFS="$dirCreate_OLD_IFS"
+         msg " ---- dircreate end IFS = $IFS ------------------"
         # because the expansion won't work otherwise, we need to disable the
         # check for the next line
         # shellcheck disable=SC2086
@@ -131,7 +137,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         unset dirCreate_crtpath
         unset dirCreate_remotessh
         unset dirCreate_crtcmd
-        IFS="$OLD_IFS"
+        
         return 0
     }
 fi

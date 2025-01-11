@@ -35,6 +35,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="initBorg"
+        initBorg_OLD_IFS="$IFS"
+        IFS=' '
         initBorg_pathlist="$1"
         initBorg_borgpath="$2"
         
@@ -60,7 +62,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 #set -e
             fi
         done
-        
+        IFS="$initBorg_OLD_IFS"
         unset initBorg_borgpath
         unset initBorg_remotepath
         unset initBorg_pathlist
@@ -78,6 +80,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="createBorg"
+        crtBorg_msglevel="$MSG_LEVEL"
+        MSG_LEVEL=5
+        crtBorg_OLD_IFS="$IFS"
+        IFS=' '
         crtBorg_pathlist="$1"
         crtBorg_backuplabel="$2"
         crtBorg_borgopts="$3"
@@ -99,17 +105,22 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 # [ ] FIXME #32 source path is wrong @kirscheGIT
                 crtBorg_cmdline="borg create $crtBorg_borgopts $crtBorg_remotepath ${crtBorg_i}::${crtBorg_backuplabel} /tmp/borgsnap_ng/" #$crtBorg_srcpath" 
                 #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey"$crtBorg_remotepath" "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
-                exec_cmd eval "$crtBorg_cmdline"
+                
                 #set -e
             else 
+                
                 # [ ] TODO #33 use crtBorg_cmdline instead of the below construct @kirscheGIT
-                exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey  "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
-                  
+                #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey  "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
+                crtBorg_cmdline="borg create $crtBorg_borgopts ${crtBorg_i}::${crtBorg_backuplabel} /tmp/borgsnap_ng/" #$crtBorg_srcpath"  
                 #set -e
             fi
+            msg "DEBUG" "Borg create cmdline: $crtBorg_cmdline"
+            exec_cmd eval "$crtBorg_cmdline"
         done
 
-        
+        MSG_LEVEL=$crtBorg_msglevel
+        IFS="$crtBorg_OLD_IFS"
+        unset crtBorg_msglevel
         unset crtBorg_cmdline
         unset crtBorg_pathlist
         unset crtBorg_backuplabel
@@ -145,6 +156,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             pruneBorg_remotepath="--remote-path=borg"
         fi
 
+        # [ ] TODO: #34 Check if statements - could be simplified I guess @kirscheGIT
         for pruneBorg_i in $pruneBorg_pathlist; do
             if [ "${pruneBorg_i#ssh://}" != "$pruneBorg_i" ]; then
                 
@@ -159,7 +171,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             else 
                 pruneBorg_cmdline="borg prune $pruneBorg_borgopts ${pruneBorg_i}"
                 #exec_cmd borg prune "$pruneBorg_borgopts" "${pruneBorg_i}"
-                exec_cmd eval pruneBorg_cmdline
+                exec_cmd eval $pruneBorg_cmdline
                 if [ "$pruneBorg_compactlabel" = "monthly" ]; then
                     pruneBorg_cmdline="borg compact ${pruneBorg_i}"
                     #exec_cmd borg compact "${pruneBorg_i}"
