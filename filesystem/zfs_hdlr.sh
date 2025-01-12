@@ -41,6 +41,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "Number of parameters for function: $# "
 
         LASTFUNC="getZFSSnapshot"
+        getZFSSnap_OLD_IFS="$IFS"
+        IFS=' '
         getZFSSnap_dataset="$1"
         getZFSSnap_date="$2"
         getZFSSnap_listParameter=""
@@ -60,6 +62,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             unset getZFSSnap_date
             unset getZFSSnap_listParameter
             unset getZFSSnap_StrContainsDate
+            IFS="$getZFSSnap_OLD_IFS"
+            unset getZFSSnap_OLD_IFS
             return 1
 
         elif [ "$#" -eq 3 ]; then
@@ -84,6 +88,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             unset getZFSSnap_date
             unset getZFSSnap_listParameter
             unset getZFSSnap_StrContainsDate
+            IFS="$getZFSSnap_OLD_IFS"
+            unset getZFSSnap_OLD_IFS
             return 1
         fi
         
@@ -92,6 +98,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset getZFSSnap_date
         unset getZFSSnap_listParameter
         unset getZFSSnap_StrContainsDate
+        IFS="$getZFSSnap_OLD_IFS"
+        unset getZFSSnap_OLD_IFS
         return 0
     }
 
@@ -102,6 +110,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
 
         LASTFUNC="lastZFSSnapshot"
+        lastZFSSnap_OLD_IFS="$IFS"
+        IFS=' '
         lastZFSSnap_dataset="$1"
         lastZFSSnap_date="$2"
 
@@ -109,12 +119,16 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
 
         unset lastZFSSnap_dataset
         unset lastZFSSnap_date
+        IFS="$lastZFSSnap_OLD_IFS"
+        unset lastZFSSnap_OLD_IFS
     }
 
     snapshotZFS() {
         # $1 - mandatory ZFS dataset
         # $2 - mandatory ZFS snapshot label
         LASTFUNC="snapshotZFS"
+        snapshotZFS_OLD_IFS="$IFS"
+        IFS=' '
         snapshotZFS_dataset="$1"
         snapshotZFS_label="$2"
         snapshotZFS_recursive="$3"
@@ -143,10 +157,15 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset snapshotZFS_recursive
         unset snapshotZFS_dataset
         unset snapshotZFS_label
+        IFS="$snapshotZFS_OLD_IFS"
+        unset snapshotZFS
         return 0
     }    
 
     pruneZFSSnapshot() {
+        LASTFUNC="pruneZFSSnapshot"
+        pruneZFS_OLD_IFS="$IFS"
+        IFS=' '
         pruneZFS_dataset="$1"
         pruneZFS_label="$2"
         pruneZFS_keepduration="$3"
@@ -155,7 +174,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         pruneZFS_TotalNumberOfSnapshots=""
         pruneZFS_Delete=""
 
-        LASTFUNC="pruneZFSSnapshot"
+        
 
         pruneZFS_label="${pruneZFS_label%-*}"
         pruneZFS_TotalNumberOfSnapshots=$(getZFSSnapshot "$pruneZFS_dataset" "$pruneZFS_label" "ALL" | wc -l)
@@ -182,6 +201,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset pruneZFS_dataset
         unset pruneZFS_label
         unset pruneZFS_keepduration
+        IFS="$pruneZFS_OLD_IFS"
+        unset pruneZFS_OLD_IFS
         #unset pruneZFS_recursive
 
     }   

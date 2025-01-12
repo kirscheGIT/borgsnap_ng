@@ -28,19 +28,27 @@ if [ -z "${HELPER_FUNCTIONS_SOURCED+x}" ]; then
 
     chkDateStr() {
         LASTFUNC="chkDateStr"
+        chkDateStr_OLD_IFS="$IFS"
+        IFS=' '
         chkDateStr_datestr="$1"
 
         if echo "$chkDateStr_datestr" | grep -qE '[0-9]{8}'; then
             msg "DEBUG" "$chkDateStr_datestr contains a date."
             unset chkDateStr_datestr
+            IFS="$chkDateStr_OLD_IFS"
+            unset chkDateStr_OLD_IFS
             return 0     
         elif [ "$chkDateStr_datestr" = "daily" ] || [ "$chkDateStr_datestr" = "weekly" ] || [ "$chkDateStr_datestr" = monthly ]; then
             msg "DEBUG" "$chkDateStr_datestr contains a backup interval."
             unset chkDateStr_datestr
+            IFS="$chkDateStr_OLD_IFS"
+            unset chkDateStr_OLD_IFS            
             return 1     
         else
             msg "ERROR" "$chkDateStr_datestr does not contain a date or valid backup interval name."
             unset chkDateStr_datestr
+            IFS="$chkDateStr_OLD_IFS"
+            unset chkDateStr_OLD_IFS            
             return 2
         fi
         

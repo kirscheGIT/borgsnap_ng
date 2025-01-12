@@ -75,8 +75,11 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
     if [ -z "${ERR_HDLR_DEFINED+x}" ]; then
         ERR_HDLR_DEFINED=1
         err_hdlr() {
+            errHdlr_LASTFUNC="$LASTFUNC"
             if [ $LASTFUNC != "unmountZFSSnapshot" ]; then
-               umountZFSSnapshot "/tmp/borgsnap_ng" ""
+               umountZFSSnapshot "$MOUNT_BORG_BASE_DIR"
+               # umountZFSSnapshot "/tmp/borgsnap_ng" ""
+               LASTFUNC="$errHdlr_LASTFUNC"
             fi
             case "$1" in
                 1) msg "ERROR" "Got exit code 1"  ;;
@@ -88,6 +91,8 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         }
 
         exec_cmd() {
+            exec_cmd_OLD_IFS="$IFS"
+            IFS=' '
             lexit_status=
             exec_cmd_string="$@"
 	        msg "DEBUG" "exec_cmd parameters in $LASTFUNC: $exec_cmd_string"
@@ -95,9 +100,12 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
             lexit_status="$?"  # Capture the exit status
             msg "DEBUG" "Error status is $lexit_status"
             if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] ; then
+                IFS="$exec_cmd_OLD_IFS"
                 err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
+            IFS="$exec_cmd_OLD_IFS"
             unset lexit_status
+            unset exec_cmd_OLD_IFS
             return 0
         }
 

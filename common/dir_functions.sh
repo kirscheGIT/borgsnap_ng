@@ -53,7 +53,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             dirExists_chkpath="${dirExists_testdir#ssh://}"
             dirExists_remotessh="${dirExists_chkpath%%/*}"
             dirExists_chkpath="${dirExists_chkpath#*/}"
-            dirExists_chkpath="/$dirExists_chkpath"
+            dirExists_chkpath="$dirExists_chkpath"
             dirExists_chkcmd="ssh $dirExists_remotessh ls"; 
         else
             msg "DEBUG" "Local directory to test is: $dirExists_testdir"
@@ -71,6 +71,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset dirExists_remotedir
             unset dirExists_chkpath
             unset dirExists_chkcmd
+            IFS="$dirExists_OLD_IFS"
+            unset dirExists_OLD_IFS
             return 0
         else
             msg "INFO" "Directory $dirExists_chkpath doesn't exist"
@@ -79,9 +81,11 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset dirExists_remotedir
             unset dirExists_chkpath
             unset dirExists_chkcmd
+            IFS="$dirExists_OLD_IFS"
+            unset dirExists_OLD_IFS
             return 1
         fi
-        dirExists_IFS=$OLD_IFS
+        
     }
     
     dircreate() {
@@ -112,7 +116,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             dirCreate_remotessh="${dirCreate_crtpath%%/*}"
             # build the correct tgt path 
             dirCreate_crtpath="${dirCreate_crtpath#*/}"
-            dirCreate_crtpath="/$dirCreate_crtpath"
+            msg "DEBUG" "directory create path is: $dirCreate_crtpath"
+            #dirCreate_crtpath="$dirCreate_crtpath"
             dirCreate_crtcmd="ssh $dirCreate_remotessh mkdir -p"; 
         else
             msg "DEBUG" "Local directory to test is: $dirCreate_tgtdir"
@@ -126,13 +131,14 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         msg "INFO" "Creating Path at path $dirCreate_crtpath"
         msg "INFO" "Create command is $dirCreate_crtcmd"
         # when the ssh mkdir fails, we need the error handler
-        IFS="$dirCreate_OLD_IFS"
-         msg " ---- dircreate end IFS = $IFS ------------------"
+        
         # because the expansion won't work otherwise, we need to disable the
         # check for the next line
         # shellcheck disable=SC2086
         eval exec_cmd "$dirCreate_crtcmd" "$dirCreate_crtpath"
-
+        IFS="$dirCreate_OLD_IFS"
+        msg " ---- dircreate end IFS = $IFS ------------------"
+        unset dirCreate_OLD_IFS
         unset dirCreate_tgtdir
         unset dirCreate_crtpath
         unset dirCreate_remotessh

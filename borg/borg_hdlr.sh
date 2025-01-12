@@ -99,25 +99,37 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             msg "borgpath not set - default to borg"
             crtBorg_remotepath="--remote-path=borg"
         fi
-
-        for crtBorg_i in $crtBorg_pathlist; do
-            if [ "${crtBorg_i#ssh://}" != "$crtBorg_i" ]; then
-                # [ ] FIXME #32 source path is wrong @kirscheGIT
-                crtBorg_cmdline="borg create $crtBorg_borgopts $crtBorg_remotepath ${crtBorg_i}::${crtBorg_backuplabel} /tmp/borgsnap_ng/" #$crtBorg_srcpath" 
-                #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey"$crtBorg_remotepath" "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
-                
-                #set -e
-            else 
-                
-                # [ ] TODO #33 use crtBorg_cmdline instead of the below construct @kirscheGIT
-                #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey  "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
-                crtBorg_cmdline="borg create $crtBorg_borgopts ${crtBorg_i}::${crtBorg_backuplabel} /tmp/borgsnap_ng/" #$crtBorg_srcpath"  
-                #set -e
-            fi
-            msg "DEBUG" "Borg create cmdline: $crtBorg_cmdline"
-            exec_cmd eval "$crtBorg_cmdline"
-        done
-
+        if [ -d $crtBorg_srcpath ]; then
+            for crtBorg_i in $crtBorg_pathlist; do
+                if [ "${crtBorg_i#ssh://}" != "$crtBorg_i" ]; then
+                    # [x] FIXME #32 source path is wrong @kirscheGIT
+                    crtBorg_cmdline="borg create $crtBorg_borgopts $crtBorg_remotepath ${crtBorg_i}::${crtBorg_backuplabel} $crtBorg_srcpath" #/tmp/borgsnap_ng/"
+                    #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey"$crtBorg_remotepath" "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
+                    #set -e
+                else 
+                    # [ ] TODO #33 use crtBorg_cmdline instead of the below construct @kirscheGIT
+                    #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey  "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
+                    crtBorg_cmdline="borg create $crtBorg_borgopts ${crtBorg_i}::${crtBorg_backuplabel} $crtBorg_srcpath" #/tmp/borgsnap_ng/" 
+                    #set -e
+                fi
+                msg "DEBUG" "Borg create cmdline: $crtBorg_cmdline"
+                exec_cmd eval "$crtBorg_cmdline"
+            done
+        else
+            MSG_LEVEL=$crtBorg_msglevel
+            IFS="$crtBorg_OLD_IFS"
+            unset crtBorg_msglevel
+            unset crtBorg_cmdline
+            unset crtBorg_pathlist
+            unset crtBorg_backuplabel
+            unset crtBorg_borgopts
+            unset crtBorg_borgpath
+            unset crtBorg_localpath
+            unset crtBorg_remotepath
+            msg "ERROR" "Source directory doesn't exist - terminate excution"
+            err_hdlr "1"
+            return 1
+        fi
         MSG_LEVEL=$crtBorg_msglevel
         IFS="$crtBorg_OLD_IFS"
         unset crtBorg_msglevel
