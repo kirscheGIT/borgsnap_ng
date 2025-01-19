@@ -34,6 +34,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # Strings that work at exampel:
         # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
+        dirExists_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="direxists"
         dirExists_testdir="$1"
         dirExists_remotessh=""
@@ -45,6 +46,14 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
 
         if [ -z "$dirExists_testdir" ]; then
             msg "ERROR" "Empty directory string was given!"
+            LASTFUNC="$dirExists_CALLINGFUCNTION"
+            unset dirExists_CALLINGFUCNTION
+            unset dirExists_remotessh
+            unset dirExists_remotedir
+            unset dirExists_chkpath
+            unset dirExists_chkcmd
+            IFS="$dirExists_OLD_IFS"
+            unset dirExists_OLD_IFS
             return 2
         fi
 
@@ -67,6 +76,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         if  $dirExists_chkcmd "$dirExists_chkpath" > /dev/null 2>&1; then
             msg "INFO" "Directory $dirExists_chkpath - exist"
             set +x
+            LASTFUNC="$dirExists_CALLINGFUCNTION"
+            unset dirExists_CALLINGFUCNTION
             unset dirExists_remotessh
             unset dirExists_remotedir
             unset dirExists_chkpath
@@ -75,6 +86,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset dirExists_OLD_IFS
             return 0
         else
+            LASTFUNC="$dirExists_CALLINGFUCNTION"
+            unset dirExists_CALLINGFUCNTION
             msg "INFO" "Directory $dirExists_chkpath doesn't exist"
             set +x
             unset dirExists_remotessh
@@ -93,8 +106,9 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # Strings that work at exampel:
         # for local directories  /tmp/test
         # for remote directories ssh://my_ssh_borg_server/dir0/dataset
+        dirCreate_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="dircreate"
-	    msg " ---- dircreate start IFS = $IFS ------------------"
+	    msg "DEBUG" " ---- dircreate start IFS = $IFS ------------------"
         dirCreate_OLD_IFS="$IFS"
         IFS=' '
         dirCreate_tgtdir="$1"
@@ -105,6 +119,15 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         msg "DEBUG" "Path is $PATH"
          if [ -z "$dirCreate_tgtdir" ]; then
             msg "ERROR" "Empty directory string was given!"
+            LASTFUNC="$dirCreate_CALLINGFUCNTION"
+            unset dirCreate_CALLINGFUCNTION
+            IFS="$dirExists_OLD_IFS"
+            unset dirExists_OLD_IFS
+            unset dirCreate_OLD_IFS
+            unset dirCreate_tgtdir
+            unset dirCreate_crtpath
+            unset dirCreate_remotessh
+            unset dirCreate_crtcmd
             return 2
         fi
         
@@ -135,9 +158,12 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         # because the expansion won't work otherwise, we need to disable the
         # check for the next line
         # shellcheck disable=SC2086
+        msg "DEBUG" "---- DIRCREATE ------------------"
         eval exec_cmd "$dirCreate_crtcmd" "$dirCreate_crtpath"
+        LASTFUNC="$dirCreate_CALLINGFUCNTION"
+        unset dirCreate_CALLINGFUCNTION
         IFS="$dirCreate_OLD_IFS"
-        msg " ---- dircreate end IFS = $IFS ------------------"
+        msg "DEBUG" " ---- dircreate end IFS = $IFS ------------------"
         unset dirCreate_OLD_IFS
         unset dirCreate_tgtdir
         unset dirCreate_crtpath

@@ -39,6 +39,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         strtBckpMchn_lastsnap=""       
         strtBckpMchn_keepduration=""
         strtBckpMchn_recursive=""
+        strtBckpMchn_borgremotecommand=""
 
         if [ -z "$strtBckpMchn_borgrepoopts" ]; then
             strtBckpMchn_borgrepoopts="--info --stats --compression=auto,zstd,9 --files-cache=ctime,size,inode --show-rc"
@@ -107,8 +108,10 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             strtBckpMchn_borgpurgeopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration"
             
-            for strtBckpMchn_repo in $strtBckpMchn_repolist; do
-                strtBckpMchn_repo=$(echo "$strtBckpMchn_repo" | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+            for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
+                strtBckpMchn_repo=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+                strtBckpMchn_borgremotecommand=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+                msg "DEBUG" "Borg remote command is = $strtBckpMchn_borgremotecommand "
                 # now we check if the current repo has to be skipped
                 # [ ] TODO #5 changing REPOSKIP from global to local variable
                 if { [ "${strtBckpMchn_repo#ssh://}" != "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
@@ -118,12 +121,18 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         msg "INFO" "Creating repo directory: $strtBckpMchn_repo"
                         dircreate "$strtBckpMchn_repo"
                         msg "INFO" "Init Borg repo: $strtBckpMchn_repo"
-                        initBorg "$strtBckpMchn_repo" "" # [ ] TODO #6 Add Borg remote command
+                        initBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" # [x] TODO #6 Add Borg remote command
                     fi
-                    # [ ] TODO #7 Take into account recursive snaps
+                    # [x] TODO #7 Take into account recursive snaps
                     set +e
-                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "" # [ ] TODO #8 Add Borg remote command
-                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgpurgeopts" "$strtBckpMchn_label" ""                # [ ] TODO #9 Add Borg remote command
+                    msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
+                    msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
+                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_borgremotecommand" # [x] TODO #8 Add Borg remote command
+                    msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
+                    msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
+                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgpurgeopts" "$strtBckpMchn_label" "$strtBckpMchn_borgremotecommand"                # [x] TODO #9 Add Borg remote command
+                    msg "DEBUG" "--------------------------- PRUNE ZFS -----------------------------------"
+                    msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
                     pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration" ""  
                     
                 fi
@@ -155,6 +164,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_date
         unset strtBckpMchn_dayofweek
         unset strtBckpMchn_dayofmonth
+        unset strtBckpMchn_borgremotecommand
     }
 
     

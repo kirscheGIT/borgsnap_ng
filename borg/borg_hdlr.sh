@@ -34,6 +34,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      if multiple remote repos are used, this value
         #      is used for all of them!
 
+        initBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="initBorg"
         initBorg_OLD_IFS="$IFS"
         IFS=' '
@@ -41,10 +42,11 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         initBorg_borgpath="$2"
         
         initBorg_remotepath=""
+        initBorg_cmdline=""
 
         if [ -n "$initBorg_borgpath" ]; then
             msg "borgpath set"
-            initBorg_remotepath="--remote-path="${initBorg_borgpath}
+            initBorg_remotepath="--remote-path=${initBorg_borgpath}"
         else
             msg "borgpath not set - default to borg"
             initBorg_remotepath="--remote-path=borg"
@@ -54,15 +56,20 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             msg "DEBUG" "Init Borg path is: $i "
             if [ "${i#ssh://}" != "$i" ]; then
                 msg "DEBUG" "Initialize Remote path"
-                exec_cmd borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i"
-                  
+                initBorg_cmdline="borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i""
+                msg "DEBUG" "Init Borg cmdline is $initBorg_cmdline"
+                #exec_cmd borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i"
+                exec_cmd eval "$initBorg_cmdline"  
                 #set -e
             else
                 exec_cmd borg init --encryption=repokey --show-rc "$i"  
                 #set -e
             fi
         done
+        LASTFUNC="$initBorg_CALLINGFUCNTION"
+        unset initBorg_CALLINGFUCNTION
         IFS="$initBorg_OLD_IFS"
+        unset initBorg_cmdline
         unset initBorg_borgpath
         unset initBorg_remotepath
         unset initBorg_pathlist
@@ -79,6 +86,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      if multiple remote repos are used, this value
         #      is used for all of them!
 
+        crtBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="createBorg"
         crtBorg_msglevel="$MSG_LEVEL"
         MSG_LEVEL=5
@@ -94,7 +102,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         if [ -n "$crtBorg_borgpath" ]; then
             msg "borgpath set"
-            crtBorg_remotepath="--remote-path="${crtBorg_borgpath}
+            crtBorg_remotepath="--remote-path=${crtBorg_borgpath}"
         else
             msg "borgpath not set - default to borg"
             crtBorg_remotepath="--remote-path=borg"
@@ -132,6 +140,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         fi
         MSG_LEVEL=$crtBorg_msglevel
         IFS="$crtBorg_OLD_IFS"
+        LASTFUNC="$crtBorg_CALLINGFUCNTION"
+        unset crtBorg_CALLINGFUCNTION
         unset crtBorg_msglevel
         unset crtBorg_cmdline
         unset crtBorg_pathlist
@@ -151,8 +161,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         # $3 - optional - remote borg command
         #      if multiple remote repos are used, this value
         #      is used for all of them!
-
+        pruneBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="createBorg"
+        pruneBorg_OLD_IFS="$IFS"
+        IFS=' '
         pruneBorg_pathlist="$1"
         pruneBorg_borgopts="$2"
         pruneBorg_compactlabel="$3"
@@ -162,7 +174,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         if [ -n "$pruneBorg_borgpath" ]; then
             msg "borgpath set"
-            pruneBorg_remotepath="--remote-path="${pruneBorg_borgpath}
+            pruneBorg_remotepath="--remote-path=${pruneBorg_borgpath}"
         else
             msg "borgpath not set - default to borg"
             pruneBorg_remotepath="--remote-path=borg"
@@ -192,7 +204,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 #set -e
             fi
         done
-                
+        LASTFUNC="$pruneBorg_CALLINGFUCNTION"
+        unset pruneBorg_CALLINGFUCNTION
+        IFS="$pruneBorg_OLD_IFS"
+        unset pruneBorg_OLD_IFS        
         unset pruneBorg_cmdline
         unset pruneBorg_pathlist
         unset pruneBorg_borgopts

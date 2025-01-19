@@ -80,13 +80,12 @@ fi
 
 export PATH="/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin"
 export BINDDIR="/run/borgsnap"
-export BORGPATH="borg1" # "borg1" for rsync.net, otherwise "borg" as appropriate
 
 ####################################################################################
 # control script messaging/ debugging and error handling
 ####################################################################################
 export MSG_DEFINED
-export MSG_LEVEL=5
+export MSG_LEVEL=1
 export ERR_HDLR_DEFINED
 export BORG_EXIT_CODES=modern
 

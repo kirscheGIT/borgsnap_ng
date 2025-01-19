@@ -30,6 +30,7 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
 
     
     mountZFSSnapshot() {
+        mountZFS_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="mountZFSSnapshot"
 	    msg " ---- mount snap start IFS = $IFS ------------------"
         mountZFS_OLD_IFS="$IFS"
@@ -59,7 +60,9 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
             exec_cmd sudo mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
         fi
         
-	    IFS="$mountZFS_OLD_IFS"
+	    LASTFUNC="$mountZFS_CALLINGFUCNTION"
+        unset mountZFS_CALLINGFUCNTION
+        IFS="$mountZFS_OLD_IFS"
         msg " ---- mount snap end IFS = $IFS ------------------"
         unset mountZFS_OLD_IFS
         unset mountZFS_snapmountbasedir
@@ -71,11 +74,13 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
 
     
     umountZFSSnapshot() {
+        unmountZFS_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="unmountZFSSnapshot"
         unmountZFS_snapmountbasedir="$1"
         unmountZFS_dataset="$2"
         unmountZFS_OLD_IFS="$IFS"
         IFS=' '
-        LASTFUNC="unmountZFSSnapshot"
+        
                
 
         # Find all directories under the mount point and unmount them
@@ -89,6 +94,8 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         #    echo "Unmounting child filesystem snapshot: $bind_dir$R"
         #    umount "$bind_dir$R"
         #done
+        LASTFUNC="$unmountZFS_CALLINGFUCNTION"
+        unset unmountZFS_CALLINGFUCNTION
         unset unmountZFS_snapmountbasedir
         unset unmountZFS_dataset
         IFS="$unmountZFS_OLD_IFS"

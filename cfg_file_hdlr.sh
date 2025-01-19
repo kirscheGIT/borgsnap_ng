@@ -27,20 +27,17 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
     msg "DEBUG" "-----------------------------------------------"
 
     readconfigfile() {
+        lconfigfile_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="readconfigfile"
         lconfigfile="$1"
        
-       # msg "DEBUG" "Jetzt rufen wir mal das Script auf!!!"
-       # exec_cmd "/root/git/conf_bak/test_folder/local_var_test2.sh"
-       
-       
+         
         [ -r "$lconfigfile" ] || die "$LASTFUNC: Unable to open $lconfigfile"
         msg "DEBUG" "$LASTFUNC: Reading Config File $lconfigfile"
         # shellcheck disable=SC1090
         . "$lconfigfile"
 
         # [ ] TODO: #20 Modifiy to check if borg user is used
-        #[ "$(id -u)" -eq 0 ] || die "Must be run as root"
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
         # [ ] TODO: #31 Automated creation of the PASS file if not existend? @kirscheGIT
@@ -49,9 +46,6 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         
         [ "$BORG_PASSPHRASE" != "" ] || die "Unable to read passphrase from file $PASS"
 
-       # if [ "$LOCAL" != "" ]; then
-       ##     [ -d "$LOCAL" ] || die "Non-existent output directory $LOCAL"
-       ## fi
         
         scriptpath="$(cd -- "$(dirname "$0")" >/dev/null 2>&1 || exit; pwd -P)"
         msg "INFO" "$LASTFUNC: scriptpath is $scriptpath/$PRE_SCRIPT"
@@ -82,14 +76,6 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             msg "INFO" "CACHEMODE set to $CACHEMODE"
             export CACHEMODE
         fi
-        if [ "$REMOTE_BORG_COMMAND" = "" ]; then
-            export BORGPATH="borg1"
-            msg "INFO" "REMOTE_BORG_COMMAND not configured, defaulting to $BORGPATH (for rsync.net)"
-        else
-            export BORGPATH="$REMOTE_BORG_COMMAND"
-            msg "INFO" "REMOTE_BORG_COMMAND set to $BORGPATH"
-        fi
-
         if [ "$LOCAL_READABLE_BY_OTHERS" = "" ]; then
             export LOCAL_READABLE_BY_OTHERS="false"
             msg "INFO" "LOCAL_READABLE_BY_OTHERS not configured, defaulting to false"
@@ -135,12 +121,6 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             die "Empty FS in $lconfigfile"
         fi
 
-
-
-        # export REMOTESSHCONFIG="$REMOTE_SSH_CONFIG"
-        # msg "DEBUG" "Remote ssh config is: $REMOTESSHCONFIG"
-        # export REMOTEDIRPSX="$REMOTE_DIR_PSX"
-
         # [x] TODO: #21 Check $FS variable if empty
         # [x] TODO: #29 Read the following parameters @kirscheGIT
         # LOCAL_READABLE_BY_OTHERS -> DEFAULT = false
@@ -149,9 +129,8 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         # REPOSKIP -> DEFAULT = "NONE"
         # RETENTIONPERIOD -> No Default - Throw error if empty
 
-
-
-
+        LASTFUNC="$lconfigfile_CALLINGFUCNTION"
+        unset lconfigfile_CALLINGFUCNTION
         unset lconfigfile
 
         }

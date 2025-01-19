@@ -39,7 +39,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         #       Valid values are weekly, monthly, daily
 
         msg "DEBUG" "Number of parameters for function: $# "
-
+        getZFSSnap_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="getZFSSnapshot"
         getZFSSnap_OLD_IFS="$IFS"
         IFS=' '
@@ -93,7 +93,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             return 1
         fi
         
- 
+        LASTFUNC="$getZFSSnap_CALLINGFUCNTION"
+        unset getZFSSnap_CALLINGFUCNTION
         unset getZFSSnap_dataset
         unset getZFSSnap_date
         unset getZFSSnap_listParameter
@@ -108,7 +109,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         # $2 - optional - remote borg command
         #      if multiple remote repos are used, this value
         #      is used for all of them!
-
+        lastZFSSnap_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="lastZFSSnapshot"
         lastZFSSnap_OLD_IFS="$IFS"
         IFS=' '
@@ -117,6 +118,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
 
         exec_cmd zfs list -t snap -o name | grep "${lastZFSSnap_dataset}@${lastZFSSnap_date}-" | sort -nr
 
+        LASTFUNC="$lastZFSSnap_CALLINGFUCNTION"
+        unset lastZFSSnap_CALLINGFUCNTION    
         unset lastZFSSnap_dataset
         unset lastZFSSnap_date
         IFS="$lastZFSSnap_OLD_IFS"
@@ -126,6 +129,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
     snapshotZFS() {
         # $1 - mandatory ZFS dataset
         # $2 - mandatory ZFS snapshot label
+        snapshotZFS_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="snapshotZFS"
         snapshotZFS_OLD_IFS="$IFS"
         IFS=' '
@@ -153,7 +157,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             done
             msg "INFO" "Snapshot operation for dataset $snapshotZFS_dataset @ label $snapshotZFS_label finished."
         fi
-
+        LASTFUNC="$snapshotZFS_CALLINGFUCNTION"
+        unset snapshotZFS_CALLINGFUCNTION
         unset snapshotZFS_recursive
         unset snapshotZFS_dataset
         unset snapshotZFS_label
@@ -163,6 +168,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
     }    
 
     pruneZFSSnapshot() {
+        pruneZFS_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="pruneZFSSnapshot"
         pruneZFS_OLD_IFS="$IFS"
         IFS=' '
@@ -195,7 +201,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
                 msg "INFO" "Purge of old Snapshot finished"
             done
         fi
-        
+        LASTFUNC="$pruneZFS_CALLINGFUCNTION"
+        unset pruneZFS_CALLINGFUCNTION
         unset pruneZFS_TotalNumberOfSnapshots
         unset pruneZFS_Delete
         unset pruneZFS_dataset
