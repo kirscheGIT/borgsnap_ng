@@ -153,9 +153,29 @@ if [ "$#" -eq 0 ]; then
   exit
 fi
 
+# FIX #9: prevent concurrent runs (cron + manual, or a hanging previous run).
+# mkdir is atomic and POSIX; the PID inside allows stale-lock detection.
+LOCKDIR="${BORGSNAP_LOCKDIR:-/tmp/borgsnap_ng.lock}"
+acquire_lock() {
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    echo "$$" > "$LOCKDIR/pid"
+    trap 'rm -rf "$LOCKDIR"' EXIT INT TERM HUP
+  else
+    lockpid=$(cat "$LOCKDIR/pid" 2>/dev/null || echo "?")
+    if [ "$lockpid" != "?" ] && ! kill -0 "$lockpid" 2>/dev/null; then
+      msg "WARNING" "Removing stale lock of dead PID $lockpid"
+      rm -rf "$LOCKDIR"
+      acquire_lock
+    else
+      die "Another borgsnap_ng instance (PID $lockpid) is running - aborting"
+    fi
+  fi
+}
+
 case "$1" in
   run)
     shift  # Remove the first argument
+    acquire_lock
     readconfigfile "$@"
     startBackupMachine "$FS" "$REPOLIST" "$RETENTIONPERIOD" "" "" "";;
     #runBackup "$@";;

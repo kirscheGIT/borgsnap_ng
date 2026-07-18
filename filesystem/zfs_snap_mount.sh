@@ -49,15 +49,33 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         # at the same time. But maybe we don't want to backup all of them
         # [x] TODO #1 put the mount and umount scripts to separate files and set the setuid bit for those scripts, making it possible for the borg
         # user to mount and unmount snapshots. (Is this also be needed for the createdir functions?) 
+        # FIX #5: record every mountpoint in a manifest so umount can tear
+        # down exactly what was mounted (in reverse order). The previous
+        # umount used find -maxdepth 1 on the base dir, which only ever saw
+        # the pool directory (depth 1), never the real mountpoints at
+        # base/pool/dataset (depth 2+).
+        MOUNT_MANIFEST="$mountZFS_snapmountbasedir/.mounts"
+        export MOUNT_MANIFEST
+        : > "$MOUNT_MANIFEST"
         if [ "$mountZFS_recursive" = "r" ] || [ "$mountZFS_recursive" = "R" ] ; then
+            # FIX #27: iterate newline-separated zfs list output with newline
+            # IFS, otherwise all child entries collapse into one word.
+            mountZFS_NL=$(printf '\n_'); mountZFS_NL=${mountZFS_NL%_}
+            IFS="$mountZFS_NL"
             for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$mountZFS_dataset" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do
+                IFS=' '
                 msg "INFO" "Mounting child filesystem snapshot: $mountZFS_dataset$R@$mountZFS_label"
                 dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
                 exec_cmd sudo mount -t zfs "$mountZFS_dataset$R@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
+                echo "$mountZFS_snapmountbasedir/$mountZFS_dataset$R" >> "$MOUNT_MANIFEST"
+                IFS="$mountZFS_NL"
             done
+            IFS=' '
+            unset mountZFS_NL
         else
             dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
             exec_cmd sudo mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
+            echo "$mountZFS_snapmountbasedir/$mountZFS_dataset" >> "$MOUNT_MANIFEST"
         fi
         
 	    LASTFUNC="$mountZFS_CALLINGFUCNTION"
@@ -74,30 +92,39 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
 
     
     umountZFSSnapshot() {
+        # $1 - mandatory snap mount base dir
+        # $2 - optional dataset (kept for API compatibility; FIX #8: err_hdlr
+        #      calls this function with a single argument, which crashed under
+        #      set -u before)
         unmountZFS_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="unmountZFSSnapshot"
         unmountZFS_snapmountbasedir="$1"
-        unmountZFS_dataset="$2"
+        unmountZFS_dataset="${2:-}"
         unmountZFS_OLD_IFS="$IFS"
         IFS=' '
-        
-               
+        unmountZFS_manifest="${MOUNT_MANIFEST:-$unmountZFS_snapmountbasedir/.mounts}"
 
-        # Find all directories under the mount point and unmount them
-        #find "$mountZFS_snapmountbasedir/$mountZFS_dataset" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
-        find "$unmountZFS_snapmountbasedir" -mindepth 1 -maxdepth 1 -type d | while read -r fs; do
-            sudo umount "$fs" && echo "Unmounted $fs" || echo "Failed to unmount $fs"
-            exec_cmd rmdir "$fs" #cleanup mount points
-        done
+        # FIX #5: unmount exactly the recorded mountpoints, deepest/last first.
+        if [ -f "$unmountZFS_manifest" ]; then
+            sed -n '1!G;h;$p' "$unmountZFS_manifest" | while read -r fs; do
+                [ -n "$fs" ] || continue
+                if sudo umount "$fs"; then
+                    msg "INFO" "Unmounted $fs"
+                    rmdir "$fs" 2>/dev/null
+                else
+                    msg "WARNING" "Failed to unmount $fs"
+                fi
+            done
+            rm -f "$unmountZFS_manifest"
+        else
+            msg "WARNING" "No mount manifest found at $unmountZFS_manifest - nothing to unmount"
+        fi
 
-        #for R in $(zfs list -Hr -t snapshot -o name "$1" | grep "@$2$" | sed -e "s@^$1@@" -e "s/@$2$//" | tac); do
-        #    echo "Unmounting child filesystem snapshot: $bind_dir$R"
-        #    umount "$bind_dir$R"
-        #done
         LASTFUNC="$unmountZFS_CALLINGFUCNTION"
         unset unmountZFS_CALLINGFUCNTION
         unset unmountZFS_snapmountbasedir
         unset unmountZFS_dataset
+        unset unmountZFS_manifest
         IFS="$unmountZFS_OLD_IFS"
         unset unmountZFS_OLD_IFS
     }

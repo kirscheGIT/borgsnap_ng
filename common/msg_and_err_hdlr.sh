@@ -76,9 +76,11 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         ERR_HDLR_DEFINED=1
         err_hdlr() {
             errHdlr_LASTFUNC="$LASTFUNC"
-            if [ $LASTFUNC != "unmountZFSSnapshot" ]; then
+            # FIX #8: MOUNT_BORG_BASE_DIR is only set after the first mount.
+            # If an error occurs before that, referencing it under set -u
+            # crashed the error handler itself.
+            if [ "$LASTFUNC" != "unmountZFSSnapshot" ] && [ -n "${MOUNT_BORG_BASE_DIR:-}" ]; then
                umountZFSSnapshot "$MOUNT_BORG_BASE_DIR"
-               # umountZFSSnapshot "/tmp/borgsnap_ng" ""
                LASTFUNC="$errHdlr_LASTFUNC"
             fi
             case "$1" in

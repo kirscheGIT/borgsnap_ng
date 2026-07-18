@@ -73,13 +73,13 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
 
         if { [ -z "$getZFSSnap_listParameter" ] || [ "$#" -eq 2 ]; } && [ "$getZFSSnap_StrContainsDate" = 0 ]; then # Get a single snapshot by name
             msg "DEBUG" "We are in the First branch."
-            exec_cmd zfs list -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}"
+            exec_cmd zfs list -H -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}"
         elif [ "$getZFSSnap_listParameter" = "LATEST" ]; then # Get the latest snapshot of a given backup intervall
             msg "DEBUG" "We are in the LATEST branch."
-            exec_cmd zfs list -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -nr | head -1 # Get a list of the snapshots of a given backup intervall
+            exec_cmd zfs list -H -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r | head -1 # Get a list of the snapshots of a given backup intervall
         elif [ "$getZFSSnap_listParameter" = "ALL" ]; then
             msg "DEBUG" "We are in the All branch"
-            exec_cmd zfs list -t snap -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -nr
+            exec_cmd zfs list -H -t snap -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r
         else
             if [ -n "$getZFSSnap_listParameter" ]; then
                 msg "ERROR" "Wrong keyword for function: $getZFSSnap_listParameter "
@@ -116,7 +116,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         lastZFSSnap_dataset="$1"
         lastZFSSnap_date="$2"
 
-        exec_cmd zfs list -t snap -o name | grep "${lastZFSSnap_dataset}@${lastZFSSnap_date}-" | sort -nr
+        exec_cmd zfs list -H -t snap -o name | grep "${lastZFSSnap_dataset}@${lastZFSSnap_date}-" | sort -r
 
         LASTFUNC="$lastZFSSnap_CALLINGFUCNTION"
         unset lastZFSSnap_CALLINGFUCNTION    
@@ -147,14 +147,9 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             else
                 exec_cmd zfs snapshot "$snapshotZFS_dataset@$snapshotZFS_label"
             fi
-            # Check if the snapshot operation is still running
-            # depending on the system load and disk speed this might take longer than
-            # anticipated
-            # [x] TODO: Implement Time Out?
-            while pgrep -f "zfs snapshot" > /dev/null; do
-                    echo "Waiting for the snapshot operation to complete..."
-                    sleep 5  #Sleep for a short time before checking again
-            done
+            # FIX #7: zfs snapshot is synchronous - the former pgrep -f wait
+            # loop could hang forever if any other process (sanoid, second
+            # instance, another admin) matched "zfs snapshot".
             msg "INFO" "Snapshot operation for dataset $snapshotZFS_dataset @ label $snapshotZFS_label finished."
         fi
         LASTFUNC="$snapshotZFS_CALLINGFUCNTION"
@@ -191,15 +186,28 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         else
             pruneZFS_Delete=$((pruneZFS_TotalNumberOfSnapshots - pruneZFS_keepduration))
             msg "INFO" "Keep: $pruneZFS_keepduration, found: $pruneZFS_TotalNumberOfSnapshots, will delete $pruneZFS_Delete"
-            for i in $(findall "$pruneZFS_dataset" "$pruneZFS_label" | tail -n "$pruneZFS_Delete"); do
+            # FIX #3: findall() never existed in this repo (leftover from the
+            # original borgsnap) - with set +e the prune silently did nothing
+            # and the pool filled up. getZFSSnapshot ... ALL returns the list
+            # sorted newest-first, so tail gives the oldest N to delete.
+            # FIX #27: zfs list output is newline-separated; with IFS=' ' the
+            # whole multi-line result was treated as ONE word and only a
+            # single (malformed) destroy was issued.
+            pruneZFS_NL=$(printf '\n_'); pruneZFS_NL=${pruneZFS_NL%_}
+            IFS="$pruneZFS_NL"
+            for i in $(getZFSSnapshot "$pruneZFS_dataset" "$pruneZFS_label" "ALL" | tail -n "$pruneZFS_Delete"); do
+                IFS=' '
                 msg "INFO" "Purging old snapshot $i"
+                # FIX #7: zfs destroy is synchronous - when it returns, the
+                # operation is committed. The former pgrep -f wait loop matched
+                # ANY process containing "zfs destroy" (sanoid, other admins,
+                # a second borgsnap instance) and could hang forever.
                 exec_cmd zfs destroy -r "$i"
-                while pgrep -f "zfs destroy" > /dev/null; do
-                    msg "INFO" "Waiting for the destroy operation to complete..."
-                    sleep 1  #Sleep for a short time before checking again
-                done
                 msg "INFO" "Purge of old Snapshot finished"
+                IFS="$pruneZFS_NL"
             done
+            IFS=' '
+            unset pruneZFS_NL
         fi
         LASTFUNC="$pruneZFS_CALLINGFUCNTION"
         unset pruneZFS_CALLINGFUCNTION

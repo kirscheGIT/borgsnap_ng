@@ -1,0 +1,4 @@
+#!/bin/sh
+: "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
+echo "umount $*" >> "$MOCK_LOG"
+exit 0

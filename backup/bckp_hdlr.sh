@@ -70,9 +70,13 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
 
         
-        for strtBckpMchn_dataset in $strtBckpMchn_fslist; do
-            strtBckpMchn_dataset=$(echo "$strtBckpMchn_dataset" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
-            strtBckpMchn_recursive=$(echo "$strtBckpMchn_dataset" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+        for strtBckpMchn_fsentry in $strtBckpMchn_fslist; do
+            # FIX #2: recursive flag must be cut from the original entry.
+            # Previously it was cut from the already-cut dataset name (which
+            # contains no comma anymore), so cut -f2 returned the dataset name
+            # itself and recursion silently never happened.
+            strtBckpMchn_dataset=$(echo "$strtBckpMchn_fsentry" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')
+            strtBckpMchn_recursive=$(echo "$strtBckpMchn_fsentry" | cut -s -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
             ###########################################
             # Major logical change compared to original borgsnap:
             # First the snapshot is created. Then the code will take care of the repo and backup dirs
@@ -106,7 +110,13 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # [ ] TODO #4 Pre and post scripts for the snapshots
             snapshotZFS "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
-            strtBckpMchn_borgpurgeopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration"
+            # FIX #4: build prune options per dataset instead of appending to
+            # the shared variable (which accumulated one --keep flag per
+            # dataset iteration).
+            # FIX #1: restrict prune to archives of the current interval via
+            # glob, otherwise borg prune with only e.g. --keep-daily=7 would
+            # delete weekly-/monthly- archives as well.
+            strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration --glob-archives '${strtBckpMchn_label%-*}-*'"
             
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
                 strtBckpMchn_repo=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
@@ -130,7 +140,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_borgremotecommand" # [x] TODO #8 Add Borg remote command
                     msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
                     msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
-                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgpurgeopts" "$strtBckpMchn_label" "$strtBckpMchn_borgremotecommand"                # [x] TODO #9 Add Borg remote command
+                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label" "$strtBckpMchn_borgremotecommand"                # [x] TODO #9 Add Borg remote command
                     msg "DEBUG" "--------------------------- PRUNE ZFS -----------------------------------"
                     msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
                     pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration" ""  

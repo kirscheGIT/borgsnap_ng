@@ -1,0 +1,3 @@
+#!/bin/sh
+# Mock sudo: just exec the (mocked) command
+exec "$@"

@@ -162,7 +162,9 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      if multiple remote repos are used, this value
         #      is used for all of them!
         pruneBorg_CALLINGFUCNTION="$LASTFUNC"
-        LASTFUNC="createBorg"
+        # FIX #11: was "createBorg" (copy-paste), which triggered exec_cmd's
+        # createBorg special case and silently swallowed all prune errors.
+        LASTFUNC="pruneBorg"
         pruneBorg_OLD_IFS="$IFS"
         IFS=' '
         pruneBorg_pathlist="$1"
