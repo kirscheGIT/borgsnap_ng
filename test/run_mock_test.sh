@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.2
+# TESTKIT_VERSION=2026-07-19.4
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -116,6 +116,57 @@ mkdir -p "$BORGSNAP_LOCKDIR"; echo 99999999 > "$BORGSNAP_LOCKDIR/pid"
 sh ./borgsnap_ng.sh run "$WORKDIR/test.conf" > "$WORKDIR/run2.log" 2>&1
 assert "FIX9: stale lock (dead pid) is detected and removed" \
   "grep -q 'stale lock' '$WORKDIR/run2.log' || [ ! -d '$BORGSNAP_LOCKDIR' ]"
+
+echo "-------------------------------------"
+echo "Error-path fixes (FIX #35-#37)"
+echo "-------------------------------------"
+
+WORKDIR2="$(mktemp -d)"
+mkdir -p "$WORKDIR2/repo1" "$WORKDIR2/repo2"
+cat > "$WORKDIR2/test2.conf" << EOF2
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR2/repo1, ; $WORKDIR2/repo2, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF2
+
+export MOCK_LOG="$WORKDIR2/mock.log"
+export MOCK_STATE="$WORKDIR2/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR2/lock"
+
+# --- Scenario A: a failing "zfs list" must abort the run (FIX #37) -----
+# Before the fix, exec_cmd piped directly into grep ran in a subshell, so
+# a failing zfs list was silently swallowed - the run finished with exit 0
+# as if nothing had happened.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_FAIL_LIST=1 sh ./borgsnap_ng.sh run "$WORKDIR2/test2.conf" > "$WORKDIR2/run_zfsfail.log" 2>&1
+RC_ZFSFAIL=$?
+assert "FIX37: a failing 'zfs list' aborts the run (was silently swallowed)" \
+  "[ $RC_ZFSFAIL -ne 0 ]"
+assert "FIX38: the zfs list failure is caught directly, not via an unrelated downstream cascade" \
+  "grep -q 'ERROR: Got exit code 1 in Function startBackupMachine' '$WORKDIR2/run_zfsfail.log' && ! grep -q \"Source directory doesn't exist\" '$WORKDIR2/run_zfsfail.log'"
+
+# --- Scenario B: borg create failing for ONE repo must not abort the run,
+#     must be reported, and the other repo must still get its archive
+#     (FIX #36). Before the fix this produced zero output outside DEBUG
+#     mode - the failure was completely invisible. ----------------------
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_FAIL_CREATE_REPO="$WORKDIR2/repo1" sh ./borgsnap_ng.sh run "$WORKDIR2/test2.conf" > "$WORKDIR2/run_borgfail.log" 2>&1
+RC_BORGFAIL=$?
+assert "FIX36: run still succeeds overall when one repo's create fails" \
+  "[ $RC_BORGFAIL -eq 0 ]"
+assert "FIX36: the failure is visible in the run output" \
+  "grep -q 'borg create failed' '$WORKDIR2/run_borgfail.log'"
+assert "FIX36: the OTHER repo still received a create attempt" \
+  "grep -q \"borg create.*$WORKDIR2/repo2\" '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

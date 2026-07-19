@@ -86,6 +86,18 @@ infunc == 0 {
     trimmed = $0
     sub(/^[ \t]+/, "", trimmed)
 
+    # for identifier in ... (POSIX for-loop - the loop variable is
+    # effectively assigned on each iteration, even though it's not
+    # "identifier=..." syntax)
+    if (match(trimmed, /^for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in([ \t]|;|$)/)) {
+        ident = trimmed
+        sub(/^for[ \t]+/, "", ident)
+        sub(/[ \t]+in([ \t]|;|$).*/, "", ident)
+        if (ident ~ /^[a-z][A-Za-z0-9]*_[A-Za-z]/ && trimmed !~ /#[ \t]*noqa:unset/) {
+            assigned[ident] = 1
+            if (!(ident in assign_line)) assign_line[ident] = FNR
+        }
+    }
     # unset name [name2 ...]
     if (trimmed ~ /^unset[ \t]+/) {
         rest = trimmed

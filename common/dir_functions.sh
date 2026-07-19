@@ -48,8 +48,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             msg "ERROR" "Empty directory string was given!"
             LASTFUNC="$dirExists_CALLINGFUCNTION"
             unset dirExists_CALLINGFUCNTION
+            unset dirExists_testdir
             unset dirExists_remotessh
-            unset dirExists_remotedir
             unset dirExists_chkpath
             unset dirExists_chkcmd
             IFS="$dirExists_OLD_IFS"
@@ -78,8 +78,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             set +x
             LASTFUNC="$dirExists_CALLINGFUCNTION"
             unset dirExists_CALLINGFUCNTION
+            unset dirExists_testdir
             unset dirExists_remotessh
-            unset dirExists_remotedir
             unset dirExists_chkpath
             unset dirExists_chkcmd
             IFS="$dirExists_OLD_IFS"
@@ -90,8 +90,8 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset dirExists_CALLINGFUCNTION
             msg "INFO" "Directory $dirExists_chkpath doesn't exist"
             set +x
+            unset dirExists_testdir
             unset dirExists_remotessh
-            unset dirExists_remotedir
             unset dirExists_chkpath
             unset dirExists_chkcmd
             IFS="$dirExists_OLD_IFS"
@@ -121,8 +121,7 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             msg "ERROR" "Empty directory string was given!"
             LASTFUNC="$dirCreate_CALLINGFUCNTION"
             unset dirCreate_CALLINGFUCNTION
-            IFS="$dirExists_OLD_IFS"
-            unset dirExists_OLD_IFS
+            IFS="$dirCreate_OLD_IFS"
             unset dirCreate_OLD_IFS
             unset dirCreate_tgtdir
             unset dirCreate_crtpath

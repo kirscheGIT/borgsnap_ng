@@ -58,11 +58,22 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         export MOUNT_MANIFEST
         : > "$MOUNT_MANIFEST"
         if [ "$mountZFS_recursive" = "r" ] || [ "$mountZFS_recursive" = "R" ] ; then
+            # FIX #37: capture zfs list's output once and check its exit
+            # code, instead of piping exec_cmd directly into grep|sed inside
+            # the command substitution. The pipe ran exec_cmd in a subshell,
+            # so a failed zfs list would have its error silently swallowed -
+            # the for loop would just iterate over nothing, looking
+            # identical to "no matching child snapshots".
+            mountZFS_zfslist=$(exec_cmd zfs list -Hr -t snapshot -o name "$mountZFS_dataset")
+            mountZFS_rc=$?
+            if [ "$mountZFS_rc" -ne 0 ]; then
+                err_hdlr "$mountZFS_rc"
+            fi
             # FIX #27: iterate newline-separated zfs list output with newline
             # IFS, otherwise all child entries collapse into one word.
             mountZFS_NL=$(printf '\n_'); mountZFS_NL=${mountZFS_NL%_}
             IFS="$mountZFS_NL"
-            for R in $(exec_cmd zfs list -Hr -t snapshot -o name "$mountZFS_dataset" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do
+            for R in $(printf '%s\n' "$mountZFS_zfslist" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do
                 IFS=' '
                 msg "INFO" "Mounting child filesystem snapshot: $mountZFS_dataset$R@$mountZFS_label"
                 dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
@@ -87,6 +98,8 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         unset mountZFS_dataset
         unset mountZFS_label
         unset mountZFS_recursive
+        unset mountZFS_zfslist
+        unset mountZFS_rc
 
     }
 

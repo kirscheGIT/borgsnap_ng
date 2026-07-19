@@ -1,8 +1,15 @@
 #!/bin/sh
+# TESTKIT_VERSION=2026-07-19.4
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot] [-H] [-d 1] -o name [dataset],
 #            bookmark, hold, release
+#
+# Fault injection (for testing error-path fixes, unset/empty = normal behavior):
+#   MOCK_ZFS_FAIL_LIST=1   "zfs list" fails with exit 1, simulating e.g. a
+#                          pool that isn't imported. Used to verify FIX #37
+#                          (a failing zfs list must abort the run, not be
+#                          silently swallowed by a pipe into grep).
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 : "${MOCK_STATE:=/tmp/borgsnap_mock.state}"
 touch "$MOCK_STATE"
@@ -28,6 +35,10 @@ case "$cmd" in
     grep -vxF "$snap" "$MOCK_STATE" > "$MOCK_STATE.tmp" && mv "$MOCK_STATE.tmp" "$MOCK_STATE"
     exit 0 ;;
   list)
+    if [ "${MOCK_ZFS_FAIL_LIST:-0}" = 1 ]; then
+      echo "cannot open 'testpool': no such pool" >&2
+      exit 1
+    fi
     # crude arg parse: detect -H, -d 1, dataset filter (last non-option arg)
     H=0; ds=""
     while [ "$#" -gt 0 ]; do

@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.2
+# TESTKIT_VERSION=2026-07-19.4
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-19.2
+# TESTKIT_VERSION=2026-07-19.4
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-19.2"
+TESTKIT_VERSION="2026-07-19.4"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -65,19 +65,32 @@ preflight_check_version() {
 
 preflight_check_version "$REPO_ROOT/test/run_mock_test.sh" "test/run_mock_test.sh"
 preflight_check_version "$REPO_ROOT/test/mocks/date" "test/mocks/date"
+preflight_check_version "$REPO_ROOT/test/mocks/zfs" "test/mocks/zfs"
+preflight_check_version "$REPO_ROOT/test/mocks/borg" "test/mocks/borg"
 
-if [ ! -x "$REPO_ROOT/test/mocks/date" ]; then
-  echo "PREFLIGHT: test/mocks/date exists but is not executable (chmod +x test/mocks/date)" >&2
-  preflight_fail=1
-fi
+for mockbin in date zfs borg; do
+  if [ ! -x "$REPO_ROOT/test/mocks/$mockbin" ]; then
+    echo "PREFLIGHT: test/mocks/$mockbin exists but is not executable (chmod +x test/mocks/$mockbin)" >&2
+    preflight_fail=1
+  fi
+done
 
-# backup/bckp_hdlr.sh is project source, not part of this testkit, so it
-# doesn't carry a TESTKIT_VERSION line - instead check for the specific fix
-# marker this integration check exercises (dataset-qualified archive names).
-if [ -f "$REPO_ROOT/backup/bckp_hdlr.sh" ] && ! grep -q "FIX #33" "$REPO_ROOT/backup/bckp_hdlr.sh"; then
-  echo "PREFLIGHT: backup/bckp_hdlr.sh is missing the FIX #33 archive-naming fix" >&2
-  preflight_fail=1
-fi
+# backup/bckp_hdlr.sh, borg/borg_hdlr.sh, filesystem/zfs_hdlr.sh, and
+# filesystem/zfs_snap_mount.sh are project source, not part of this testkit,
+# so they don't carry a TESTKIT_VERSION line - instead check for specific
+# fix markers this integration check exercises.
+preflight_check_marker() {
+  # $1 = file path (relative to REPO_ROOT), $2 = marker string
+  if [ -f "$REPO_ROOT/$1" ] && ! grep -q "$2" "$REPO_ROOT/$1"; then
+    echo "PREFLIGHT: $1 is missing the $2 fix" >&2
+    preflight_fail=1
+  fi
+}
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #33"
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #38"
+preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #35"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #36"
+preflight_check_marker "filesystem/zfs_hdlr.sh" "FIX #37"
 
 if [ "$preflight_fail" -eq 1 ]; then
   echo "" >&2

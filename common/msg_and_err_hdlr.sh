@@ -75,7 +75,11 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
     if [ -z "${ERR_HDLR_DEFINED+x}" ]; then
         ERR_HDLR_DEFINED=1
         err_hdlr() {
-            errHdlr_LASTFUNC="$LASTFUNC"
+            # errHdlr_LASTFUNC is intentionally never unset: this function
+            # always terminates the process via `exit 1` below, it never
+            # returns control to the caller, so there's no later code path
+            # where a stale value could cause harm.
+            errHdlr_LASTFUNC="$LASTFUNC" # noqa:unset
             # FIX #8: MOUNT_BORG_BASE_DIR is only set after the first mount.
             # If an error occurs before that, referencing it under set -u
             # crashed the error handler itself.
@@ -95,20 +99,34 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         exec_cmd() {
             exec_cmd_OLD_IFS="$IFS"
             IFS=' '
-            lexit_status=
+            # lexit_status carries the wrapped command's real exit code all
+            # the way to the `return` below (see FIX #35), so it can't be
+            # unset before that point like the other locals in this
+            # function - it IS the return value.
+            lexit_status= # noqa:unset
             exec_cmd_string="$@"
 	        msg "DEBUG" "exec_cmd parameters in $LASTFUNC: $exec_cmd_string"
             "$@"  # Execute the command passed as arguments
-            lexit_status="$?"  # Capture the exit status
+            lexit_status="$?"  # noqa:unset - see comment above; carries the return value
             msg "DEBUG" "Error status is $lexit_status"
             if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] ; then
                 IFS="$exec_cmd_OLD_IFS"
                 err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
             IFS="$exec_cmd_OLD_IFS"
-            unset lexit_status
             unset exec_cmd_OLD_IFS
-            return 0
+            unset exec_cmd_string
+            # FIX #35: propagate the real exit code instead of a hardcoded
+            # 0. When exec_cmd runs directly (no pipe/substitution), this
+            # changes nothing observable - err_hdlr already exited the
+            # process above on failure, so reaching this line always means
+            # lexit_status is 0, OR LASTFUNC was "createBorg" (the
+            # intentional multi-repo-resilience carve-out - see FIX #36 in
+            # borg_hdlr.sh for how that case is now surfaced instead of
+            # silently swallowed). When exec_cmd runs inside a pipe or
+            # command substitution, this is what lets the caller detect the
+            # failure via $? in its own (non-subshell) context.
+            return "$lexit_status"
         }
 
          die() {

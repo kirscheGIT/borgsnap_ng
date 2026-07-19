@@ -69,6 +69,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         LASTFUNC="$initBorg_CALLINGFUCNTION"
         unset initBorg_CALLINGFUCNTION
         IFS="$initBorg_OLD_IFS"
+        unset initBorg_OLD_IFS
         unset initBorg_cmdline
         unset initBorg_borgpath
         unset initBorg_remotepath
@@ -122,34 +123,51 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 fi
                 msg "DEBUG" "Borg create cmdline: $crtBorg_cmdline"
                 exec_cmd eval "$crtBorg_cmdline"
+                crtBorg_rc=$?
+                if [ "$crtBorg_rc" -ne 0 ]; then
+                    # FIX #36: exec_cmd intentionally skips err_hdlr when
+                    # LASTFUNC=="createBorg" (see FIX #11), so one repo
+                    # failing (e.g. rsync.net being unreachable) doesn't
+                    # abort backups to the other configured repos. Until
+                    # now that made the failure completely silent outside
+                    # DEBUG mode - surface it instead, then continue with
+                    # the remaining repos as originally intended.
+                    msg "ERROR" "borg create failed (exit $crtBorg_rc) for repo $crtBorg_i, dataset $crtBorg_srcpath - continuing with remaining repos"
+                fi
             done
         else
             MSG_LEVEL=$crtBorg_msglevel
             IFS="$crtBorg_OLD_IFS"
+            unset crtBorg_OLD_IFS
             unset crtBorg_msglevel
             unset crtBorg_cmdline
+            unset crtBorg_i
             unset crtBorg_pathlist
             unset crtBorg_backuplabel
             unset crtBorg_borgopts
             unset crtBorg_borgpath
-            unset crtBorg_localpath
+            unset crtBorg_srcpath
             unset crtBorg_remotepath
+            unset crtBorg_rc
             msg "ERROR" "Source directory doesn't exist - terminate excution"
             err_hdlr "1"
             return 1
         fi
         MSG_LEVEL=$crtBorg_msglevel
         IFS="$crtBorg_OLD_IFS"
+        unset crtBorg_OLD_IFS
         LASTFUNC="$crtBorg_CALLINGFUCNTION"
         unset crtBorg_CALLINGFUCNTION
         unset crtBorg_msglevel
         unset crtBorg_cmdline
+        unset crtBorg_i
         unset crtBorg_pathlist
         unset crtBorg_backuplabel
         unset crtBorg_borgopts
         unset crtBorg_borgpath
-        unset crtBorg_localpath
+        unset crtBorg_srcpath
         unset crtBorg_remotepath
+        unset crtBorg_rc
         return 0
 
     }
@@ -211,8 +229,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         IFS="$pruneBorg_OLD_IFS"
         unset pruneBorg_OLD_IFS        
         unset pruneBorg_cmdline
+        unset pruneBorg_i
         unset pruneBorg_pathlist
         unset pruneBorg_borgopts
+        unset pruneBorg_compactlabel
         unset pruneBorg_borgpath
         unset pruneBorg_remotepath
         return 0

@@ -1,4 +1,19 @@
 #!/bin/sh
+# TESTKIT_VERSION=2026-07-19.4
+# Fault injection (unset/empty = normal behavior):
+#   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
+#     repo (matched as a substring of the repo::archive argument) fails with
+#     exit 1. Used to verify FIX #36 (a failing create for one repo must be
+#     reported, but must not abort backups to the other configured repos).
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 echo "borg $*" >> "$MOCK_LOG"
+if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      "${MOCK_BORG_FAIL_CREATE_REPO}"*)
+        echo "$arg: Permission denied (mock fault injection)" >&2
+        exit 1 ;;
+    esac
+  done
+fi
 exit 0

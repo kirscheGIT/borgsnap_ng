@@ -57,8 +57,14 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         
 
         strtBckpMchn_date=$(exec_cmd date +"%Y%m%d")
+        strtBckpMchn_rc=$?
+        [ "$strtBckpMchn_rc" -eq 0 ] || err_hdlr "$strtBckpMchn_rc"
         strtBckpMchn_dayofweek=$(exec_cmd date +"%w")
+        strtBckpMchn_rc=$?
+        [ "$strtBckpMchn_rc" -eq 0 ] || err_hdlr "$strtBckpMchn_rc"
         strtBckpMchn_dayofmonth=$(exec_cmd date +"%d")
+        strtBckpMchn_rc=$?
+        [ "$strtBckpMchn_rc" -eq 0 ] || err_hdlr "$strtBckpMchn_rc"
 
         if ! direxists "$strtBckpMchn_snapmountbasedir" ; then
             msg "INFO" "Creating snap mount directory: $strtBckpMchn_snapmountbasedir"
@@ -92,6 +98,17 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 
                 if [ "$strtBckpMchn_label" = "monthly" ] || [ "$strtBckpMchn_label" = "weekly" ]; then
                     strtBckpMchn_lastsnap=$(getZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "LATEST")
+                    strtBckpMchn_rc=$?
+                    # FIX #38: getZFSSnapshot's own internal err_hdlr call
+                    # (see FIX #37) terminates only the subshell created by
+                    # this command substitution - $? right here correctly
+                    # reflects that exit code, but without this explicit
+                    # check the empty $strtBckpMchn_lastsnap that results
+                    # was silently treated as "no previous snapshot exists"
+                    # instead of "the zfs query itself failed".
+                    if [ "$strtBckpMchn_rc" -ne 0 ]; then
+                        err_hdlr "$strtBckpMchn_rc"
+                    fi
                     if { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq 1 ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
                         strtBckpMchn_label="$strtBckpMchn_label""-""$strtBckpMchn_date"
                         break
@@ -176,10 +193,12 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
         unset OLD_IFS
         unset strtBckpMchn_interval
+        unset strtBckpMchn_fslist
+        unset strtBckpMchn_fsentry
         unset strtBckpMchn_dataset
         unset strtBckpMchn_repo
-        unset strtBckpMchn_lfslist
         unset strtBckpMchn_repolist
+        unset strtBckpMchn_repoandcmd
         unset strtBckpMchn_intervallist
         unset strtBckpMchn_borgrepoopts
         unset strtBckpMchn_borgpurgeopts
@@ -187,6 +206,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_label
         unset strtBckpMchn_dataslug
         unset strtBckpMchn_borglabel
+        unset strtBckpMchn_pruneopts
         unset strtBckpMchn_lastsnap       
         unset strtBckpMchn_keepduration
         unset strtBckpMchn_recursive
@@ -194,6 +214,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_dayofweek
         unset strtBckpMchn_dayofmonth
         unset strtBckpMchn_borgremotecommand
+        unset strtBckpMchn_rc
     }
 
     

@@ -71,15 +71,29 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         fi
         
 
+        # FIX #37: capture zfs list's output once and check its exit code
+        # explicitly, instead of piping exec_cmd directly into grep. Piping
+        # exec_cmd runs it in a subshell, so if zfs list failed, exec_cmd's
+        # internal err_hdlr-triggered exit only killed that subshell - grep
+        # would still run against empty input, "not find" a match, and this
+        # function would return 1 exactly as if the snapshot legitimately
+        # didn't exist. A failed zfs list and "no matching snapshot" were
+        # indistinguishable to every caller.
+        getZFSSnap_zfslist=$(exec_cmd zfs list -H -t snapshot -o name)
+        getZFSSnap_rc=$?
+        if [ "$getZFSSnap_rc" -ne 0 ]; then
+            err_hdlr "$getZFSSnap_rc"
+        fi
+
         if { [ -z "$getZFSSnap_listParameter" ] || [ "$#" -eq 2 ]; } && [ "$getZFSSnap_StrContainsDate" = 0 ]; then # Get a single snapshot by name
             msg "DEBUG" "We are in the First branch."
-            exec_cmd zfs list -H -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}"
+            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_date}"
         elif [ "$getZFSSnap_listParameter" = "LATEST" ]; then # Get the latest snapshot of a given backup intervall
             msg "DEBUG" "We are in the LATEST branch."
-            exec_cmd zfs list -H -t snapshot -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r | head -1 # Get a list of the snapshots of a given backup intervall
+            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r | head -1 # Get a list of the snapshots of a given backup intervall
         elif [ "$getZFSSnap_listParameter" = "ALL" ]; then
             msg "DEBUG" "We are in the All branch"
-            exec_cmd zfs list -H -t snap -o name | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r
+            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r
         else
             if [ -n "$getZFSSnap_listParameter" ]; then
                 msg "ERROR" "Wrong keyword for function: $getZFSSnap_listParameter "
@@ -88,6 +102,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             unset getZFSSnap_date
             unset getZFSSnap_listParameter
             unset getZFSSnap_StrContainsDate
+            unset getZFSSnap_zfslist
+            unset getZFSSnap_rc
             IFS="$getZFSSnap_OLD_IFS"
             unset getZFSSnap_OLD_IFS
             return 1
@@ -99,6 +115,8 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset getZFSSnap_date
         unset getZFSSnap_listParameter
         unset getZFSSnap_StrContainsDate
+        unset getZFSSnap_zfslist
+        unset getZFSSnap_rc
         IFS="$getZFSSnap_OLD_IFS"
         unset getZFSSnap_OLD_IFS
         return 0
@@ -116,12 +134,19 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         lastZFSSnap_dataset="$1"
         lastZFSSnap_date="$2"
 
-        exec_cmd zfs list -H -t snap -o name | grep "${lastZFSSnap_dataset}@${lastZFSSnap_date}-" | sort -r
+        lastZFSSnap_zfslist=$(exec_cmd zfs list -H -t snap -o name)
+        lastZFSSnap_rc=$?
+        if [ "$lastZFSSnap_rc" -ne 0 ]; then
+            err_hdlr "$lastZFSSnap_rc"
+        fi
+        printf '%s\n' "$lastZFSSnap_zfslist" | grep "${lastZFSSnap_dataset}@${lastZFSSnap_date}-" | sort -r
 
         LASTFUNC="$lastZFSSnap_CALLINGFUCNTION"
         unset lastZFSSnap_CALLINGFUCNTION    
         unset lastZFSSnap_dataset
         unset lastZFSSnap_date
+        unset lastZFSSnap_zfslist
+        unset lastZFSSnap_rc
         IFS="$lastZFSSnap_OLD_IFS"
         unset lastZFSSnap_OLD_IFS
     }
@@ -158,7 +183,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset snapshotZFS_dataset
         unset snapshotZFS_label
         IFS="$snapshotZFS_OLD_IFS"
-        unset snapshotZFS
+        unset snapshotZFS_OLD_IFS
         return 0
     }    
 
