@@ -1,0 +1,93 @@
+# Lima instance: zfs-dev
+# Debian 13 (Trixie) + zfsutils-linux, for real ZFS testing (snapshots,
+# send/receive, bookmarks, pool behavior) that the mock harness can't cover.
+#
+# zfs-dkms/zfsutils-linux live in Debian's "contrib" component (CDDL/GPL
+# licensing means Debian can't ship the kernel module in main), so contrib
+# has to be enabled explicitly - this is done in the provision script below,
+# not via apt.sources in the base template.
+#
+# Usage:
+#   limactl start --name=zfs-dev zfs-debian.yaml
+#   limactl shell zfs-dev
+#   sudo zpool status testpool
+#
+minimumLimaVersion: 2.0.0
+
+base:
+  - template:debian-13
+
+cpus: 4
+memory: "4GiB"
+# Extra headroom: the loopback-backed test pool below needs space on top of
+# the base disk image.
+disk: "60GiB"
+
+mounts:
+  - location: "~/Developer/scripts/borgsnap_ng"
+    mountPoint: "/home/{{.User}}/borgsnap_ng"
+    writable: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v zpool >/dev/null 2>&1 && exit 0
+      export DEBIAN_FRONTEND=noninteractive
+
+      # Enable contrib (zfs-dkms/zfsutils-linux are not in main).
+      . /etc/os-release
+      if ! grep -q contrib /etc/apt/sources.list.d/debian.sources 2>/dev/null; then
+        sed -i 's/^Components: main$/Components: main contrib/' /etc/apt/sources.list.d/debian.sources
+      fi
+
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        dkms build-essential "linux-headers-$(uname -r)" lsb-release
+
+      apt-get install -y zfs-dkms zfsutils-linux
+
+      # Load the module now so the probe below doesn't have to wait for a reboot.
+      modprobe zfs
+
+  - mode: system
+    script: |
+      #!/bin/bash
+      # Create a small loopback-file-backed pool for immediate experimentation.
+      # This is throwaway test data, not meant to survive VM recreation.
+      set -eux -o pipefail
+      zpool list testpool >/dev/null 2>&1 && exit 0
+      mkdir -p /var/lib/zfs-testdisk
+      truncate -s 8G /var/lib/zfs-testdisk/disk0.img
+      zpool create -O compression=zstd -O atime=off testpool /var/lib/zfs-testdisk/disk0.img
+      zfs create testpool/data
+      zfs create testpool/home
+
+probes:
+  - script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      if ! timeout 60s bash -c 'until command -v zpool >/dev/null 2>&1 && zpool list testpool >/dev/null 2>&1; do sleep 2; done'; then
+        echo "zfs module or testpool is not ready yet"
+        exit 1
+      fi
+    hint: |
+      zfs-dkms build or module load is taking too long, or the module failed
+      to build against this kernel. Check:
+        limactl shell zfs-dev sudo dkms status
+        limactl shell zfs-dev sudo journalctl -k | grep -i zfs
+
+message: |
+  A test pool "testpool" (8G loopback file, datasets testpool/data and
+  testpool/home) is ready. Enter the VM with:
+    limactl shell zfs-dev
+
+  Try the borgsnap_ng scripts against it, e.g.:
+    sudo zfs snapshot testpool/data@daily-$(date +%Y%m%d)
+    sudo zfs list -t snapshot
+
+  To destroy and recreate the test pool from scratch:
+    sudo zpool destroy testpool
+    sudo rm /var/lib/zfs-testdisk/disk0.img
+    limactl start zfs-dev   # re-runs provisioning, recreates the pool

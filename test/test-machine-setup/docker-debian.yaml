@@ -1,0 +1,85 @@
+# Lima instance: docker-dev
+# Debian 13 (Trixie) + Docker CE, for running the borgsnap_ng mock test
+# harness (and any other container-based work) without polluting the Mac.
+#
+# Usage:
+#   limactl start --name=docker-dev docker-debian.yaml
+#   limactl shell docker-dev
+#   # or from the Mac host directly:
+#   export DOCKER_HOST=$(limactl list docker-dev --format 'unix://{{.Dir}}/sock/docker.sock')
+#   docker run --rm hello-world
+#
+minimumLimaVersion: 2.0.0
+
+base:
+  - template:debian-13
+
+# containerd is managed by Docker itself, not by Lima.
+containerd:
+  system: false
+  user: false
+
+cpus: 4
+memory: "4GiB"
+disk: "40GiB"
+
+# Adjust the host-side path to wherever you keep the repo checkout.
+# writable: true means changes made from inside the VM (e.g. git operations
+# you might run in-container) are visible back on the Mac immediately.
+mounts:
+  - location: "~/Developer/scripts/borgsnap_ng"
+    mountPoint: "/home/{{.User}}/borgsnap_ng"
+    writable: true
+
+provision:
+  # Required for host.docker.internal to resolve from inside containers.
+  - mode: system
+    script: |
+      #!/bin/sh
+      set -eux
+      sed -i 's/host.lima.internal.*/host.lima.internal host.docker.internal/' /etc/hosts
+
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v docker >/dev/null 2>&1 && exit 0
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl gnupg
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+      chmod a+r /etc/apt/keyrings/docker.asc
+      . /etc/os-release
+      echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+      apt-get update
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      systemctl enable --now docker
+      groupadd -f docker
+      usermod -aG docker "{{.User}}"
+
+probes:
+  - script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      if ! timeout 60s bash -c 'until command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; do sleep 2; done'; then
+        echo "docker is not running yet"
+        exit 1
+      fi
+    hint: |
+      The docker installation or docker.service startup is taking too long.
+      Run "limactl shell docker-dev sudo journalctl -u docker" to check.
+
+portForwards:
+  - guestSocket: "/var/run/docker.sock"
+    hostSocket: "{{.Dir}}/sock/docker.sock"
+
+message: |
+  To run Docker CLI commands from the Mac host, run:
+    export DOCKER_HOST="unix://{{.Dir}}/sock/docker.sock"
+    docker run --rm hello-world
+
+  Or just enter the VM directly:
+    limactl shell docker-dev
