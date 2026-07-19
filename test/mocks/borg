@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.4
+# TESTKIT_VERSION=2026-07-19.5
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with

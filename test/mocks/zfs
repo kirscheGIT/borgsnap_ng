@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.4
+# TESTKIT_VERSION=2026-07-19.5
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot] [-H] [-d 1] -o name [dataset],

@@ -48,7 +48,17 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             strtBckpMchn_borgpurgeopts="--info --stats --show-rc"
         fi
         if [ -z "$strtBckpMchn_snapmountbasedir" ]; then
-            strtBckpMchn_snapmountbasedir="/tmp/borgsnap_ng" # [ ] TODO #3 set to Borg defaults
+            # FIX #39 (resolves TODO #3): use BINDDIR, which borgsnap_ng.sh
+            # already exports as "/run/borgsnap" but which nothing actually
+            # read until now - the hardcoded /tmp/borgsnap_ng default was
+            # still in effect. /run is root-only (mode 755), tmpfs, and not
+            # subject to systemd-tmpfiles' periodic /tmp sweeps - /tmp was a
+            # predictable, world-writable path for a root-mounted
+            # filesystem, i.e. a real (if narrow) symlink-attack surface.
+            # The ${BINDDIR:-/run/borgsnap} fallback keeps this function
+            # safe to call/test even if borgsnap_ng.sh's export somehow
+            # didn't run first.
+            strtBckpMchn_snapmountbasedir="${BINDDIR:-/run/borgsnap}"
         fi
 
 

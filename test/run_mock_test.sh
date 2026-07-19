@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.4
+# TESTKIT_VERSION=2026-07-19.5
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -105,6 +105,8 @@ assert "FIX5: umount called for real mountpoints (depth 2)" \
   "grep -q 'umount .*/tank/data' '$MOCK_LOG'"
 assert "FIX5: recursive child mount also unmounted" \
   "grep -q 'umount .*/tank/data/child' '$MOCK_LOG'"
+assert "FIX39: snapshot mount base is /run/borgsnap, not /tmp" \
+  "grep -q '/run/borgsnap/tank/data' '$MOCK_LOG' && ! grep -q '/tmp/borgsnap_ng' '$MOCK_LOG'"
 assert "FIX7: no pgrep wait loop hangs (run.log has no waiting messages)" \
   "! grep -q 'Waiting for the' '$WORKDIR/run.log'"
 assert "borg create called once per repo per dataset (4 creates)" \
