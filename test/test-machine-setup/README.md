@@ -219,11 +219,76 @@ edited provisioning script), you need to `stop` + `delete` + recreate via
 
 ## Troubleshooting
 
-**`error during connect: Get "http://%2FUsers%2F.../docker.sock/_ping": EOF`**
-The Docker daemon inside the VM isn't responding yet, or isn't running.
-Check with `limactl shell docker-dev sudo systemctl status docker` and
-`limactl shell docker-dev sudo journalctl -u docker --no-pager | tail -50`.
-If provisioning was interrupted, delete and recreate the instance.
+**`docker run --rm hello-world` inside `docker-dev` says permission denied /
+requires `sudo`, and setting `DOCKER_HOST` on the host still fails with
+`error during connect: ... EOF`.**
+Provisioning adds the guest user to the `docker` group
+(`usermod -aG docker`), but group membership only takes effect for
+processes started *after* the change. `limactl shell` uses a multiplexed
+(ControlMaster) SSH connection that gets established early during boot —
+before provisioning finishes — so a session opened right after instance
+creation can be stuck with the pre-`docker`-group membership indefinitely,
+even across multiple `limactl shell` invocations, because they reuse the
+same multiplexed connection. The Lima guest agent that forwards the Docker
+socket to the host (`DOCKER_HOST`) can be affected the same way, which is
+why both symptoms tend to show up together.
+
+Diagnose first, don't just restart blindly:
+
+```sh
+limactl shell docker-dev getent group docker
+```
+
+If this shows `docker:x:<gid>:<you>`, provisioning succeeded and it's just
+the stale session — restart the whole instance (not just the shell) so a
+fresh ControlMaster connection and guest agent get established against the
+already-provisioned state:
+
+```sh
+limactl stop docker-dev
+limactl start docker-dev
+limactl shell docker-dev id                      # "docker" should now be listed
+limactl shell docker-dev docker run --rm hello-world
+```
+
+If `getent group docker` shows nothing, provisioning itself failed —
+check `limactl shell docker-dev sudo journalctl -u docker --no-pager | tail -50`
+and consider recreating the instance.
+
+This restart is normally only needed once, right after the instance is
+first created — `zfs-dev` doesn't need it at all, since its provisioning
+never changes group membership (all `zfs`/`zpool` commands there use `sudo`
+directly instead of relying on group membership).
+
+**`sudo docker run --rm hello-world` fails with
+`dial unix /var/run/docker.sock: connect: no such file or directory`, even
+though `DOCKER_HOST` is exported.**
+`sudo` resets environment variables by default (`env_reset` in the sudoers
+policy), so your exported `DOCKER_HOST` doesn't survive the `sudo` call —
+`docker` then falls back to the default host socket path
+(`/var/run/docker.sock`), which doesn't exist on macOS since there's no
+local daemon. Either use `sudo -E docker ...` to preserve the environment,
+or — usually simpler — just don't use `sudo` at all once you're in the
+`docker` group (see the entry above); that's the whole point of the group
+membership.
+
+**`limactl shell docker-dev id` (or any command) prints
+`bash: line 1: cd: /Users/you/... No such file or directory` before the
+actual output, twice.**
+Cosmetic, not an error. `limactl shell` tries to mirror your current host
+working directory into the guest by `cd`-ing to the identical path, which
+only works with Lima's default 1:1 home-directory mount. Since we
+deliberately replaced that with a remapped mount
+(`/Users/you/.../borgsnap_ng` → `/home/you/borgsnap_ng`, not a straight
+mirror — see "The `~` mount problem" above), `limactl shell` can't resolve
+that translation and falls back to trying your raw host path, then `$HOME`,
+both of which don't exist in the guest. The command you actually ran still
+executes correctly afterwards. To land directly in the repo instead of
+seeing this every time:
+
+```sh
+limactl shell docker-dev -- sh -c 'cd /home/$(whoami)/borgsnap_ng && exec bash'
+```
 
 **`ls -la` on the guest home directory doesn't show the mounted repo, but
 `cd` into it works fine.**
