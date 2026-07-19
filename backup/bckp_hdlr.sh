@@ -110,13 +110,30 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # [ ] TODO #4 Pre and post scripts for the snapshots
             snapshotZFS "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
+            # FIX #33: Borg archive names must be unique *within a repo*.
+            # strtBckpMchn_label (interval-date, e.g. "monthly-20260719") is
+            # correct and sufficient for ZFS snapshot naming, since ZFS
+            # already namespaces snapshots by dataset. But when multiple
+            # datasets share the same borg repo, using that same label as
+            # the archive name collides on the second dataset ("Archive
+            # monthly-20260719 already exists", rc 30) - discovered via a
+            # real borg run against a real multi-dataset config; the mock
+            # harness can't catch this since the borg mock doesn't enforce
+            # uniqueness. Prepend a filesystem-safe dataset slug to
+            # disambiguate archive names (dataset first, e.g.
+            # "tank_data-daily-20260719"), without touching the ZFS-side label at all.
+            strtBckpMchn_dataslug=$(echo "$strtBckpMchn_dataset" | tr '/' '_')
+            strtBckpMchn_borglabel="$strtBckpMchn_dataslug-$strtBckpMchn_label"
             # FIX #4: build prune options per dataset instead of appending to
             # the shared variable (which accumulated one --keep flag per
             # dataset iteration).
             # FIX #1: restrict prune to archives of the current interval via
             # glob, otherwise borg prune with only e.g. --keep-daily=7 would
             # delete weekly-/monthly- archives as well.
-            strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration --glob-archives '${strtBckpMchn_label%-*}-*'"
+            # FIX #33: glob must also match the dataset slug now that it's
+            # part of the archive name, otherwise prune would consider every
+            # dataset's archives together instead of scoping to this one.
+            strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration --glob-archives '$strtBckpMchn_dataslug-${strtBckpMchn_label%-*}-*'"
             
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
                 strtBckpMchn_repo=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
@@ -137,7 +154,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     set +e
                     msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
                     msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
-                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_label" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_borgremotecommand" # [x] TODO #8 Add Borg remote command
+                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_borgremotecommand" # [x] TODO #8 Add Borg remote command
                     msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
                     msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
                     pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label" "$strtBckpMchn_borgremotecommand"                # [x] TODO #9 Add Borg remote command
@@ -168,6 +185,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_borgpurgeopts
         unset strtBckpMchn_snapmountbasedir
         unset strtBckpMchn_label
+        unset strtBckpMchn_dataslug
+        unset strtBckpMchn_borglabel
         unset strtBckpMchn_lastsnap       
         unset strtBckpMchn_keepduration
         unset strtBckpMchn_recursive

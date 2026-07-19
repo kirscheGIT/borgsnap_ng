@@ -1,0 +1,31 @@
+#!/bin/sh
+# TESTKIT_VERSION=2026-07-19.2
+# Mock date for borgsnap_ng tests.
+#
+# bckp_hdlr.sh calls `date +"%Y%m%d"`, `date +"%w"`, and `date +"%d"` to pick
+# which retention interval (monthly/weekly/daily) applies "today". Without
+# this mock, the test ran against the REAL wall-clock date - which worked
+# fine until the day this test happened to be run on a real Sunday (%w=0)
+# or the 1st of a real month (%d=01), at which point the interval-selection
+# logic in bckp_hdlr.sh correctly switched to "weekly"/"monthly", while the
+# test's assertions still hardcoded "daily-" as the expected label. That
+# looked exactly like FIX1/FIX2/FIX3 regressing, but the actual fixes were
+# never broken - only the test's implicit "today is never special" assumption
+# was.
+#
+# Pinned to 2026-07-15 (a real Wednesday - day-of-week 3, day-of-month 15):
+# neither the 1st of the month nor a Sunday, and it doesn't collide with any
+# of the pre-seeded snapshot dates in run_mock_test.sh (2026-07-01 through
+# 2026-07-09, plus 2026-07-12).
+case "$1" in
+  +%Y%m%d) echo "20260715" ;;
+  +%w)     echo "3" ;;
+  +%d)     echo "15" ;;
+  *)
+    # Any other format this test doesn't know about yet: fail loudly rather
+    # than silently falling through to the real wall-clock date, which is
+    # exactly the failure mode this mock exists to prevent.
+    echo "mock date: unhandled format '$1' - add a case for it in test/mocks/date" >&2
+    exit 1
+    ;;
+esac

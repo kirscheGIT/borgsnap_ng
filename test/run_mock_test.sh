@@ -1,4 +1,5 @@
 #!/bin/sh
+# TESTKIT_VERSION=2026-07-19.2
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -14,8 +15,35 @@ export BORGSNAP_LOCKDIR="$WORKDIR/lock"
 
 # mocks first in PATH; script re-exports PATH, so we also bind-mount via symlinks
 # into a dir the script's hardcoded PATH contains: /usr/local/bin
-for b in zfs borg mount umount sudo; do
-  ln -sf "$TESTROOT/mocks/$b" /usr/local/bin/$b
+#
+# IMPORTANT: this VM is long-lived (stop/start persists its filesystem), not
+# a throwaway container - so these symlinks MUST be removed again on exit.
+# Left in place, a stale mock `sudo` (a deliberate no-op passthrough, see
+# mocks/sudo) silently stops every future `sudo` call in this VM from
+# actually elevating privileges, with no error - this bit us for real once
+# already. BACKUP_DIR preserves anything that legitimately existed at these
+# paths before we touched them (unlikely for these names, but not
+# impossible), so cleanup restores the prior state exactly rather than just
+# deleting.
+BACKUP_DIR="$WORKDIR/path-backup"
+mkdir -p "$BACKUP_DIR"
+
+cleanup_mocks() {
+  for b in zfs borg mount umount sudo date; do
+    if [ -e "$BACKUP_DIR/$b" ] || [ -L "$BACKUP_DIR/$b" ]; then
+      mv "$BACKUP_DIR/$b" "/usr/local/bin/$b"
+    else
+      rm -f "/usr/local/bin/$b"
+    fi
+  done
+}
+trap cleanup_mocks EXIT INT TERM HUP
+
+for b in zfs borg mount umount sudo date; do
+  if [ -e "/usr/local/bin/$b" ] || [ -L "/usr/local/bin/$b" ]; then
+    mv "/usr/local/bin/$b" "$BACKUP_DIR/$b"
+  fi
+  ln -sf "$TESTROOT/mocks/$b" "/usr/local/bin/$b"
 done
 
 mkdir -p "$WORKDIR/repo1" "$WORKDIR/repo2" "$WORKDIR/snapmnt"
@@ -66,7 +94,7 @@ assert "FIX2: recursive snapshot taken for tank/data (zfs snapshot -r)" \
 assert "FIX2: non-recursive snapshot for tank/home (no -r)" \
   "grep 'zfs snapshot tank/home@daily-' '$MOCK_LOG'"
 assert "FIX1: borg prune restricted via --glob-archives 'daily-*'" \
-  "grep 'borg prune' '$MOCK_LOG' | grep -q 'glob-archives daily-'"
+  "grep 'borg prune' '$MOCK_LOG' | grep -q 'glob-archives tank_data-daily-\\|glob-archives tank_home-daily-'"
 assert "FIX4: no accumulated duplicate --keep flags in any prune call" \
   "! grep 'borg prune' '$MOCK_LOG' | grep -q 'keep-daily=7.*--keep-daily=7'"
 assert "FIX3: zfs destroy issued for old snapshots (prune works again)" \
