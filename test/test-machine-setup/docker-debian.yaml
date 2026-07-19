@@ -2,8 +2,22 @@
 # Debian 13 (Trixie) + Docker CE, for running the borgsnap_ng mock test
 # harness (and any other container-based work) without polluting the Mac.
 #
-# Usage:
-#   limactl start --name=docker-dev docker-debian.yaml
+# IMPORTANT - do not use `limactl start --name=docker-dev docker-debian.yaml`
+# directly. Every Lima template - including the bare _images/debian-13 used
+# as `base:` below - ultimately chains back to templates/default.yaml, which
+# adds an unconditional, un-suppressible
+#   - location: "~"
+# mount (your whole macOS home, mirrored 1:1 as /Users/<you> in the guest,
+# since it has no mountPoint override). Lima combines mount lists across the
+# whole base chain rather than replacing them, so this entry cannot be
+# removed declaratively from this file. Use the wrapper script instead,
+# which creates the instance, strips that one entry from the *resolved*
+# config, and only then starts it (a one-time fix - stop/start afterwards
+# never re-merges the base templates):
+#
+#   ./create-clean-instance.sh docker-dev docker-debian.yaml
+#
+# Usage after that:
 #   limactl shell docker-dev
 #   # or from the Mac host directly:
 #   export DOCKER_HOST=$(limactl list docker-dev --format 'unix://{{.Dir}}/sock/docker.sock')
@@ -12,7 +26,7 @@
 minimumLimaVersion: 2.0.0
 
 base:
-  - template:debian-13
+  - template:_images/debian-13
 
 # containerd is managed by Docker itself, not by Lima.
 containerd:
@@ -23,11 +37,12 @@ cpus: 4
 memory: "4GiB"
 disk: "40GiB"
 
-# Adjust the host-side path to wherever you keep the repo checkout.
-# writable: true means changes made from inside the VM (e.g. git operations
-# you might run in-container) are visible back on the Mac immediately.
+# Adjust the host-side path to wherever you keep the repo checkout — or,
+# better, don't: leave the placeholder below and let
+# create-clean-instance.sh substitute it automatically (auto-detected via
+# git, an env var, or an interactive prompt). See that script for details.
 mounts:
-  - location: "~/Developer/scripts/borgsnap_ng"
+  - location: "__BORGSNAP_REPO_PATH__"
     mountPoint: "/home/{{.User}}/borgsnap_ng"
     writable: true
 

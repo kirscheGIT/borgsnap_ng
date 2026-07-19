@@ -7,15 +7,29 @@
 # has to be enabled explicitly - this is done in the provision script below,
 # not via apt.sources in the base template.
 #
-# Usage:
-#   limactl start --name=zfs-dev zfs-debian.yaml
+# IMPORTANT - do not use `limactl start --name=zfs-dev zfs-debian.yaml`
+# directly. Every Lima template - including the bare _images/debian-13 used
+# as `base:` below - ultimately chains back to templates/default.yaml, which
+# adds an unconditional, un-suppressible
+#   - location: "~"
+# mount (your whole macOS home, mirrored 1:1 as /Users/<you> in the guest,
+# since it has no mountPoint override). Lima combines mount lists across the
+# whole base chain rather than replacing them, so this entry cannot be
+# removed declaratively from this file. Use the wrapper script instead,
+# which creates the instance, strips that one entry from the *resolved*
+# config, and only then starts it (a one-time fix - stop/start afterwards
+# never re-merges the base templates):
+#
+#   ./create-clean-instance.sh zfs-dev zfs-debian.yaml
+#
+# Usage after that:
 #   limactl shell zfs-dev
 #   sudo zpool status testpool
 #
 minimumLimaVersion: 2.0.0
 
 base:
-  - template:debian-13
+  - template:_images/debian-13
 
 cpus: 4
 memory: "4GiB"
@@ -24,7 +38,7 @@ memory: "4GiB"
 disk: "60GiB"
 
 mounts:
-  - location: "~/Developer/scripts/borgsnap_ng"
+  - location: "__BORGSNAP_REPO_PATH__"
     mountPoint: "/home/{{.User}}/borgsnap_ng"
     writable: true
 
