@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.5
+# TESTKIT_VERSION=2026-07-19.8
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -169,6 +169,113 @@ assert "FIX36: the failure is visible in the run output" \
   "grep -q 'borg create failed' '$WORKDIR2/run_borgfail.log'"
 assert "FIX36: the OTHER repo still received a create attempt" \
   "grep -q \"borg create.*$WORKDIR2/repo2\" '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "Config permission checks (FIX #40)"
+echo "-------------------------------------"
+
+PERM644="$WORKDIR2/insecure.key"; echo "x" > "$PERM644"; chmod 644 "$PERM644"
+PERM600="$WORKDIR2/secure.key"; echo "x" > "$PERM600"; chmod 600 "$PERM600"
+
+PERM_OUT=$(
+  cd "$REPOROOT" || exit 1
+  msg() { echo "MSG[$*]"; }
+  export MSG_DEFINED=1 LASTFUNC=""
+  # shellcheck disable=SC1091
+  . ./common/msg_and_err_hdlr.sh
+  # shellcheck disable=SC1091
+  . ./cfg_file_hdlr.sh
+  checkFilePerms "$PERM644" "insecure test file"
+  checkFilePerms "$PERM600" "secure test file"
+)
+
+assert "FIX40: insecure (644) file triggers a permission warning" \
+  "printf '%s\n' \"\$PERM_OUT\" | grep -q 'insecure test file.*is readable or writable by group/others'"
+assert "FIX40: secure (600) file does NOT trigger a warning" \
+  "! printf '%s\n' \"\$PERM_OUT\" | grep -q \"\$PERM600.*is readable or writable\""
+
+echo "-------------------------------------"
+echo "Backend split (FIX #41)"
+echo "-------------------------------------"
+
+# FIX #41a: pruneZFSSnapshot must run once per dataset/interval, not once
+# per repo. Empirically verified (not just asserted): the same scenario
+# with the old per-repo-loop placement produces 22 "zfs list -H -t
+# snapshot -o name" calls in $MOCK_LOG; with the fix, exactly 18. Fewer
+# repos would shrink the gap, more would widen it - this exact count is
+# specific to this test's 2 datasets x 2 repos x 2 intervals-checked setup.
+assert "FIX41a: pruneZFSSnapshot runs once per dataset, not once per repo (18 zfs list calls, not 22)" \
+  "[ \$(grep -c 'zfs list -H -t snapshot -o name\$' '$WORKDIR/mock.log') -eq 18 ]"
+
+WORKDIR3="$(mktemp -d)"
+mkdir -p "$WORKDIR3/repo1"
+cat > "$WORKDIR3/test3.conf" << EOF3
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borg:$WORKDIR3/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF3
+
+export MOCK_LOG="$WORKDIR3/mock.log"
+export MOCK_STATE="$WORKDIR3/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR3/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+
+# FIX #41b: an explicit "borg:" prefix must behave identically to no prefix.
+sh ./borgsnap_ng.sh run "$WORKDIR3/test3.conf" > "$WORKDIR3/run_borgprefix.log" 2>&1
+RC_BORGPREFIX=$?
+assert "FIX41b: explicit 'borg:' prefix run succeeds" "[ $RC_BORGPREFIX -eq 0 ]"
+assert "FIX41b: explicit 'borg:' prefix still creates a borg archive" \
+  "grep -q \"borg create.*$WORKDIR3/repo1\" '$MOCK_LOG'"
+
+# FIX #42: zfs-send backend, step 1 - first full send only. Incremental
+# sends (a second call against an already-existing target) are not yet
+# supported and must fail with a specific, actionable message rather than
+# silently overwriting or crashing.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sed "s|REPOLIST=.*|REPOLIST=\"zfssend:tank/zfssendtarget, \"|" "$WORKDIR3/test3.conf" > "$WORKDIR3/test3-zfssend.conf"
+
+# First run: target doesn't exist yet -> the full send must succeed.
+sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend1.log" 2>&1
+RC_ZFSSEND1=$?
+assert "FIX42: first zfssend run (fresh target) succeeds" "[ $RC_ZFSSEND1 -eq 0 ]"
+assert "FIX42: zfs send was invoked for the source snapshot" \
+  "grep -q 'zfs send tank/data@' '$MOCK_LOG'"
+assert "FIX42: zfs receive was invoked for the mirrored target path" \
+  "grep -q 'zfs receive tank/zfssendtarget/tank/data' '$MOCK_LOG'"
+assert "FIX42: target dataset exists after the send (mirrored under the target prefix)" \
+  "grep -q '^tank/zfssendtarget/tank/data' '$MOCK_STATE'"
+
+# Second run against the SAME (now-existing) target: must fail with the
+# specific incremental-not-supported message, not silently overwrite.
+sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend2.log" 2>&1
+RC_ZFSSEND2=$?
+assert "FIX42: second zfssend run (target already exists) fails" "[ $RC_ZFSSEND2 -ne 0 ]"
+assert "FIX42: second run gives the specific incremental-not-supported message" \
+  "grep -q \"already exists - incremental sends aren't implemented yet\" '$WORKDIR3/run_zfssend2.log'"
+
+# Fault injection on both sides of the send|receive pipe - this is the
+# whole point of the dual-tempfile exit-code pattern (see the comment in
+# backendZfsSend): each side's real exit code must be caught
+# independently, not just whichever happens to be the pipeline's last
+# command.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_FAIL_SEND=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_sendfail.log" 2>&1
+RC_SENDFAIL=$?
+assert "FIX42: a failing zfs send aborts the run" "[ $RC_SENDFAIL -ne 0 ]"
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_FAIL_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_recvfail.log" 2>&1
+RC_RECVFAIL=$?
+assert "FIX42: a failing zfs receive aborts the run" "[ $RC_RECVFAIL -ne 0 ]"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

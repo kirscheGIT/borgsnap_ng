@@ -26,6 +26,45 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
     msg "msg_and_err_hdlr.sh invoked"
     msg "DEBUG" "-----------------------------------------------"
 
+    checkFilePerms() {
+        # $1 - mandatory file path to check
+        # $2 - mandatory human-readable label for the warning message
+        # FIX #40: warns (does not die - see call site) if a file is
+        # readable or writable by group or others. Uses `ls -ld` instead of
+        # `stat`, since stat's flags differ between GNU (-c) and BSD/macOS
+        # (-f) - ls -l's leading permission-string format is far more
+        # universally consistent across POSIX-ish systems.
+        chkFilePerms_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkFilePerms"
+        chkFilePerms_target="$1"
+        chkFilePerms_label="$2"
+
+        if [ ! -e "$chkFilePerms_target" ]; then
+            LASTFUNC="$chkFilePerms_CALLINGFUCNTION"
+            unset chkFilePerms_CALLINGFUCNTION
+            unset chkFilePerms_target
+            unset chkFilePerms_label
+            return 0
+        fi
+
+        chkFilePerms_perms=$(ls -ld -- "$chkFilePerms_target" 2>/dev/null | awk '{print $1}')
+        chkFilePerms_group=$(printf '%s' "$chkFilePerms_perms" | cut -c5-7)
+        chkFilePerms_other=$(printf '%s' "$chkFilePerms_perms" | cut -c8-10)
+
+        if [ "$chkFilePerms_group" != "---" ] || [ "$chkFilePerms_other" != "---" ]; then
+            msg "WARNING" "$chkFilePerms_label ($chkFilePerms_target) is readable or writable by group/others ($chkFilePerms_perms) - recommend: chmod 600 $chkFilePerms_target"
+        fi
+
+        LASTFUNC="$chkFilePerms_CALLINGFUCNTION"
+        unset chkFilePerms_CALLINGFUCNTION
+        unset chkFilePerms_target
+        unset chkFilePerms_label
+        unset chkFilePerms_perms
+        unset chkFilePerms_group
+        unset chkFilePerms_other
+        return 0
+    }
+
     readconfigfile() {
         lconfigfile_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="readconfigfile"
@@ -33,6 +72,12 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
        
          
         [ -r "$lconfigfile" ] || die "$LASTFUNC: Unable to open $lconfigfile"
+        # FIX #40: readability alone doesn't mean the permissions are sane -
+        # a world-readable config file (or worse, passphrase file) is a
+        # real information leak on any multi-user system. Warn (don't die -
+        # this shouldn't break an existing working setup on first upgrade),
+        # loudly, for both the config file and the PASS file below.
+        checkFilePerms "$lconfigfile" "config file"
         msg "DEBUG" "$LASTFUNC: Reading Config File $lconfigfile"
         # shellcheck disable=SC1090
         . "$lconfigfile"
@@ -41,6 +86,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
         # [ ] TODO: #31 Automated creation of the PASS file if not existend? @kirscheGIT
+        checkFilePerms "$PASS" "PASS (borg passphrase) file"
         BORG_PASSPHRASE=$(cat "$PASS")
         export BORG_PASSPHRASE
         

@@ -163,34 +163,51 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration --glob-archives '$strtBckpMchn_dataslug-${strtBckpMchn_label%-*}-*'"
             
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
-                strtBckpMchn_repo=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+                strtBckpMchn_repospec=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 strtBckpMchn_borgremotecommand=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+
+                # FIX #41: backend dispatch. A REPOLIST entry may be
+                # prefixed with a backend type ("borg:" or "zfssend:"); no
+                # prefix defaults to "borg" so every existing config keeps
+                # working unchanged.
+                case "$strtBckpMchn_repospec" in
+                    borg:*) strtBckpMchn_repotype="borg"; strtBckpMchn_repo="${strtBckpMchn_repospec#borg:}" ;;
+                    zfssend:*) strtBckpMchn_repotype="zfssend"; strtBckpMchn_repo="${strtBckpMchn_repospec#zfssend:}" ;;
+                    *) strtBckpMchn_repotype="borg"; strtBckpMchn_repo="$strtBckpMchn_repospec" ;;
+                esac
+
+                msg "DEBUG" "Repo type is = $strtBckpMchn_repotype, target = $strtBckpMchn_repo "
                 msg "DEBUG" "Borg remote command is = $strtBckpMchn_borgremotecommand "
                 # now we check if the current repo has to be skipped
                 # [ ] TODO #5 changing REPOSKIP from global to local variable
                 if { [ "${strtBckpMchn_repo#ssh://}" != "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "REMOTE" ]; } || \
                     { [ "${strtBckpMchn_repo#ssh://}" = "$strtBckpMchn_repo" ] && [ "$REPOSKIP" != "LOCAL" ]; }; then
 
-                    if ! direxists "$strtBckpMchn_repo"; then
-                        msg "INFO" "Creating repo directory: $strtBckpMchn_repo"
-                        dircreate "$strtBckpMchn_repo"
-                        msg "INFO" "Init Borg repo: $strtBckpMchn_repo"
-                        initBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" # [x] TODO #6 Add Borg remote command
-                    fi
-                    # [x] TODO #7 Take into account recursive snaps
                     set +e
-                    msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
-                    msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
-                    createBorg "$strtBckpMchn_repo" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_borgremotecommand" # [x] TODO #8 Add Borg remote command
-                    msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
-                    msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
-                    pruneBorg "$strtBckpMchn_repo" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label" "$strtBckpMchn_borgremotecommand"                # [x] TODO #9 Add Borg remote command
-                    msg "DEBUG" "--------------------------- PRUNE ZFS -----------------------------------"
-                    msg "DEBUG" "Repo is: $strtBckpMchn_repo " 
-                    pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration" ""  
-                    
+                    case "$strtBckpMchn_repotype" in
+                        borg)
+                            backendBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label"
+                            ;;
+                        zfssend)
+                            backendZfsSend "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration"
+                            ;;
+                        *)
+                            die "Unknown backend type '$strtBckpMchn_repotype' for repo entry: $strtBckpMchn_repoandcmd"
+                            ;;
+                    esac
+
                 fi
             done
+            # FIX #41: pruneZFSSnapshot takes no repo-specific argument (its
+            # 4th parameter is always empty) - it always operated purely on
+            # the ZFS source side, independent of which/how many repos this
+            # dataset backs up to. It used to run once per repo iteration
+            # above (harmless, since it's idempotent once there's nothing
+            # left to prune, but redundant and the wrong place for it once
+            # repos can be different backend types). Runs once per
+            # dataset/interval instead.
+            msg "DEBUG" "--------------------------- PRUNE ZFS -----------------------------------"
+            pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration" ""
             msg "DEBUG" "--------------------------------------------------------------"
             msg "DEBUG" "Snapmount base dir: $strtBckpMchn_snapmountbasedir " 
             msg "DEBUG" "Snapmount dataset: $strtBckpMchn_dataset "
@@ -207,6 +224,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_fsentry
         unset strtBckpMchn_dataset
         unset strtBckpMchn_repo
+        unset strtBckpMchn_repospec
+        unset strtBckpMchn_repotype
         unset strtBckpMchn_repolist
         unset strtBckpMchn_repoandcmd
         unset strtBckpMchn_intervallist

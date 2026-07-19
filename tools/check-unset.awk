@@ -125,6 +125,27 @@ infunc == 0 {
         }
     }
 
+    # case-branch one-liners: `pattern) var=x; var2=y ;;` - the assignment
+    # isn't the first token on the line, so the check above alone misses
+    # it. Split on ';' and ')' and re-check each segment. noqa detection
+    # still uses the full `trimmed` line (see above), not the segment, so
+    # existing end-of-line noqa comments keep working here too.
+    {
+        segn = split(trimmed, segs, /[;)]/)
+        for (segi = 1; segi <= segn; segi++) {
+            seg = segs[segi]
+            sub(/^[ \t]+/, "", seg)
+            if (match(seg, /^[A-Za-z_][A-Za-z0-9_]*=/)) {
+                sident = seg
+                sub(/=.*/, "", sident)
+                if (sident ~ /^[a-z][A-Za-z0-9]*_[A-Za-z]/ && trimmed !~ /#[ \t]*noqa:unset/) {
+                    assigned[sident] = 1
+                    if (!(sident in assign_line)) assign_line[sident] = FNR
+                }
+            }
+        }
+    }
+
     if (depth <= 0) {
         finish_function()
     }

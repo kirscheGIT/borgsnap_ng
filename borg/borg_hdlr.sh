@@ -238,4 +238,53 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         return 0
     }
 
+    backendBorg(){
+        # FIX #41: backend wrapper called from startBackupMachine's repo
+        # dispatch (see backup/bckp_hdlr.sh). Bundles the existing
+        # init-if-needed / create / prune sequence behind one call, so the
+        # dispatch itself doesn't need to know borg-specific details.
+        # $1 - mandatory repo path
+        # $2 - optional borg remote command
+        # $3 - mandatory archive label (dataset-qualified, see FIX #33)
+        # $4 - mandatory borg create options
+        # $5 - mandatory source path (mounted snapshot directory)
+        # $6 - mandatory prune options string (see FIX #1/#4/#33)
+        # $7 - mandatory interval label (e.g. "monthly-20260719"; pruneBorg
+        #      uses its prefix to decide whether to also run borg compact)
+        backendBorg_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="backendBorg"
+        backendBorg_repo="$1"
+        backendBorg_remotecmd="$2"
+        backendBorg_label="$3"
+        backendBorg_createopts="$4"
+        backendBorg_srcpath="$5"
+        backendBorg_pruneopts="$6"
+        backendBorg_intervallabel="$7"
+
+        if ! direxists "$backendBorg_repo"; then
+            msg "INFO" "Creating repo directory: $backendBorg_repo"
+            dircreate "$backendBorg_repo"
+            msg "INFO" "Init Borg repo: $backendBorg_repo"
+            initBorg "$backendBorg_repo" "$backendBorg_remotecmd"
+        fi
+
+        msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
+        msg "DEBUG" "Repo is: $backendBorg_repo "
+        createBorg "$backendBorg_repo" "$backendBorg_label" "$backendBorg_createopts" "$backendBorg_srcpath" "$backendBorg_remotecmd"
+        msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
+        msg "DEBUG" "Repo is: $backendBorg_repo "
+        pruneBorg "$backendBorg_repo" "$backendBorg_pruneopts" "$backendBorg_intervallabel" "$backendBorg_remotecmd"
+
+        LASTFUNC="$backendBorg_CALLINGFUCNTION"
+        unset backendBorg_CALLINGFUCNTION
+        unset backendBorg_repo
+        unset backendBorg_remotecmd
+        unset backendBorg_label
+        unset backendBorg_createopts
+        unset backendBorg_srcpath
+        unset backendBorg_pruneopts
+        unset backendBorg_intervallabel
+        return 0
+    }
+
 fi

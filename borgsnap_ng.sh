@@ -115,6 +115,7 @@ fi
 . ./common/dir_functions.sh
 . ./filesystem/zfs_hdlr.sh
 . ./filesystem/zfs_snap_mount.sh
+. ./filesystem/zfs_send_hdlr.sh
 . ./backup/bckp_hdlr.sh
 . ./borg/borg_hdlr.sh
 . ./cfg_file_hdlr.sh

@@ -1,15 +1,29 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.5
+# TESTKIT_VERSION=2026-07-19.8
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot] [-H] [-d 1] -o name [dataset],
-#            bookmark, hold, release
+#            list [-H] <dataset> (plain existence check, no -t), send, receive,
+#            create [-p], bookmark, hold, release
+#
+# MOCK_STATE line conventions:
+#   "dataset@snapshot"     - a snapshot (as before)
+#   "dataset"              - a bare dataset with no snapshots yet (new: set
+#                             by `zfs create` and by `zfs receive`, needed so
+#                             a plain `zfs list dataset` existence check -
+#                             used by backendZfsSend, FIX #42 - can tell a
+#                             created-but-empty target apart from one that
+#                             doesn't exist at all)
 #
 # Fault injection (for testing error-path fixes, unset/empty = normal behavior):
-#   MOCK_ZFS_FAIL_LIST=1   "zfs list" fails with exit 1, simulating e.g. a
-#                          pool that isn't imported. Used to verify FIX #37
-#                          (a failing zfs list must abort the run, not be
-#                          silently swallowed by a pipe into grep).
+#   MOCK_ZFS_FAIL_LIST=1     "zfs list" fails with exit 1, simulating e.g. a
+#                            pool that isn't imported. Used to verify FIX #37
+#                            (a failing zfs list must abort the run, not be
+#                            silently swallowed by a pipe into grep).
+#   MOCK_ZFS_FAIL_SEND=1     "zfs send" fails with exit 1 (e.g. simulating a
+#                            vanished source snapshot). Used for FIX #42.
+#   MOCK_ZFS_FAIL_RECEIVE=1  "zfs receive" fails with exit 1 (e.g. simulating
+#                            a full/unwritable target pool). Used for FIX #42.
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 : "${MOCK_STATE:=/tmp/borgsnap_mock.state}"
 touch "$MOCK_STATE"
@@ -39,24 +53,78 @@ case "$cmd" in
       echo "cannot open 'testpool': no such pool" >&2
       exit 1
     fi
-    # crude arg parse: detect -H, -d 1, dataset filter (last non-option arg)
-    H=0; ds=""
+    # crude arg parse: detect -H, -t (and whether it was given at all),
+    # -d 1, dataset filter (last non-option arg)
+    H=0; ds=""; had_t=0
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -H) H=1 ;;
-        -t|-o|-d) shift ;;
+        -t) had_t=1; shift ;;
+        -o|-d) shift ;;
         -Hr) H=1 ;;
         -*) : ;;
         *) ds="$1" ;;
       esac
       shift
     done
-    [ "$H" = 0 ] && echo "NAME"
-    if [ -n "$ds" ]; then
-      grep -E "^${ds}(/[^@]+)?@" "$MOCK_STATE" 2>/dev/null
+    if [ "$had_t" = 1 ]; then
+      # existing behavior: snapshot listing/filtering, always exit 0 - an
+      # empty result legitimately means "no matching snapshots yet", not
+      # an error.
+      [ "$H" = 0 ] && echo "NAME"
+      if [ -n "$ds" ]; then
+        grep -E "^${ds}(/[^@]+)?@" "$MOCK_STATE" 2>/dev/null
+      else
+        cat "$MOCK_STATE"
+      fi
+      exit 0
     else
-      cat "$MOCK_STATE"
+      # FIX #42: plain `zfs list [-H] dataset` with no -t - a real
+      # existence check, used by backendZfsSend. Unlike the snapshot
+      # listing above, a dataset that genuinely doesn't exist must fail
+      # (exit 1), matching real zfs, or "does the target exist yet" would
+      # be untestable.
+      if [ -z "$ds" ]; then
+        [ "$H" = 0 ] && echo "NAME"
+        cat "$MOCK_STATE"
+        exit 0
+      fi
+      match=$(grep -E "^${ds}(@.*)?\$" "$MOCK_STATE" 2>/dev/null | head -1)
+      if [ -z "$match" ]; then
+        echo "cannot open '$ds': dataset does not exist" >&2
+        exit 1
+      fi
+      [ "$H" = 0 ] && echo "NAME"
+      echo "$ds"
+      exit 0
     fi
+    ;;
+  create)
+    [ "$1" = "-p" ] && shift
+    ds="$1"
+    grep -qxF "$ds" "$MOCK_STATE" || echo "$ds" >> "$MOCK_STATE"
+    exit 0 ;;
+  send)
+    if [ "${MOCK_ZFS_FAIL_SEND:-0}" = 1 ]; then
+      echo "cannot send: mock injected failure" >&2
+      exit 1
+    fi
+    # Emit a small placeholder "stream" so a real pipe into a mock receive
+    # has something to consume. Not a real zfs send format - this is a
+    # mock, the receive side below doesn't try to interpret it either.
+    printf 'MOCKSTREAM:%s\n' "$*"
+    exit 0 ;;
+  receive)
+    # Always consume stdin fully, even on injected failure, so the
+    # upstream mock send side never blocks on a full pipe buffer.
+    cat > /dev/null
+    if [ "${MOCK_ZFS_FAIL_RECEIVE:-0}" = 1 ]; then
+      echo "cannot receive: mock injected failure" >&2
+      exit 1
+    fi
+    ds="$1"
+    grep -qxF "$ds" "$MOCK_STATE" || echo "$ds" >> "$MOCK_STATE"
+    echo "${ds}@mockreceived" >> "$MOCK_STATE"
     exit 0 ;;
   bookmark|hold|release) exit 0 ;;
   *) exit 0 ;;
