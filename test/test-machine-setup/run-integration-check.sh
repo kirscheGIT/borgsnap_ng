@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.8
+# TESTKIT_VERSION=2026-07-20.1
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-19.8
+# TESTKIT_VERSION=2026-07-20.1
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-19.8"
+TESTKIT_VERSION="2026-07-20.1"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -99,6 +99,7 @@ preflight_check_marker "backup/bckp_hdlr.sh" "FIX #41"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #41"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #41"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #43"
 preflight_check_marker "cfg_file_hdlr.sh" "FIX #40"
 preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #35"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #36"
@@ -277,14 +278,16 @@ CONF
           REAL_RESULT="FAIL (run succeeded, verification failed - see output above)"
         fi
 
-        # FIX #42: real zfs-send backend test (Step 1 - first full send
-        # only). Only runs if the borg-based real test above already
-        # passed, since it reuses the same testpool/data dataset. This
-        # exercises real zfs send/receive semantics the mock harness
-        # can't - the mock fakes the data stream with plain echo/cat.
+        # FIX #42/#43: real zfs-send backend test. Step 1 (full send) plus
+        # step 3 (bookmark-based incremental). Only runs if the borg-based
+        # real test above already passed, since it reuses the same
+        # testpool/data dataset. This exercises real zfs send/receive/
+        # bookmark semantics the mock harness can't - the mock fakes the
+        # data stream with plain echo/cat and doesn't enforce real
+        # bookmark/snapshot relationships.
         if [ "$REAL_RESULT" = "PASS" ]; then
           echo ""
-          echo "==> Testing the real zfs-send backend (FIX #42, step 1)..."
+          echo "==> Testing the real zfs-send backend (FIX #42, step 1: full send)..."
           set +e
           limactl shell zfs-dev sudo sh -c "
             cd '$REPO_IN_VM'
@@ -309,21 +312,62 @@ CONF
           if [ "$REAL_ZFSSEND_RC" -eq 0 ]; then
             set +e
             limactl shell zfs-dev sudo sh -c "
-              echo '--- zfs-send target dataset ---'
+              echo '--- zfs-send target dataset after first (full) send ---'
               zfs list -o name,used,creation -r testpool/zfssendtarget 2>&1
+              echo '--- snapshots on the target dataset (should be exactly 1 after the first send) ---'
+              zfs list -t snapshot -r testpool/zfssendtarget/testpool/data 2>&1
+              echo '--- tracking bookmark ---'
+              zfs list -t bookmark -r testpool/data 2>&1
             "
             REAL_ZFSSEND_VERIFY_RC=$?
             set -e
             if [ "$REAL_ZFSSEND_VERIFY_RC" -eq 0 ]; then
-              REAL_ZFSSEND_RESULT="PASS"
+              echo ""
+              echo "==> Testing incremental send via bookmark (FIX #43, step 3)..."
+              set +e
+              limactl shell zfs-dev sudo sh -c "
+                cd '$REPO_IN_VM'
+                sh borgsnap_ng.sh run '$REAL_TESTDIR/test-zfssend.conf'
+              "
+              REAL_ZFSSEND_INCR_RC=$?
+              set -e
+              if [ "$REAL_ZFSSEND_INCR_RC" -eq 0 ]; then
+                set +e
+                limactl shell zfs-dev sudo sh -c "
+                  echo '--- zfs-send target dataset after second (incremental) send ---'
+                  zfs list -o name,used,creation -r testpool/zfssendtarget 2>&1
+                  echo '--- snapshots on the target dataset (must now be 2+ - proves the incremental added a genuinely new point-in-time, not a no-op) ---'
+                  zfs list -t snapshot -r testpool/zfssendtarget/testpool/data 2>&1
+                  SNAPCOUNT=\$(zfs list -H -t snapshot -o name -r testpool/zfssendtarget/testpool/data 2>/dev/null | wc -l)
+                  echo \"snapshot count on target: \$SNAPCOUNT\"
+                  if [ \"\$SNAPCOUNT\" -lt 2 ]; then
+                    echo \"ERROR: expected at least 2 snapshots on target after incremental send, found \$SNAPCOUNT\" >&2
+                    exit 1
+                  fi
+                  echo '--- tracking bookmark after incremental (should still exist, now pointing at the newer snapshot) ---'
+                  zfs list -t bookmark -r testpool/data 2>&1
+                "
+                REAL_ZFSSEND_INCR_VERIFY_RC=$?
+                set -e
+                if [ "$REAL_ZFSSEND_INCR_VERIFY_RC" -eq 0 ]; then
+                  REAL_ZFSSEND_RESULT="PASS"
+                else
+                  REAL_ZFSSEND_RESULT="FAIL (incremental run succeeded, verification failed)"
+                fi
+              else
+                REAL_ZFSSEND_RESULT="FAIL (incremental send exit $REAL_ZFSSEND_INCR_RC)"
+              fi
             else
-              REAL_ZFSSEND_RESULT="FAIL (run succeeded, target dataset not found)"
+              REAL_ZFSSEND_RESULT="FAIL (first run succeeded, target dataset/bookmark not found)"
             fi
           else
             REAL_ZFSSEND_RESULT="FAIL (exit $REAL_ZFSSEND_RC)"
           fi
           if [ "$KEEP" -eq 0 ]; then
-            limactl shell zfs-dev sudo sh -c "zfs destroy -r testpool/zfssendtarget 2>/dev/null || true"
+            limactl shell zfs-dev sudo sh -c "
+              zfs destroy -r testpool/zfssendtarget 2>/dev/null || true
+              zfs destroy 'testpool/data#zfssend-testpool_zfssendtarget' 2>/dev/null || true
+            "
           fi
         fi
       else

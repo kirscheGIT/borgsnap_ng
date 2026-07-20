@@ -2,14 +2,23 @@
 # zfs_send_hdlr.sh - licensed under GPLv3. See the LICENSE file for additional
 # details.
 #
-# Placeholder for the "zfssend" backend (REPOLIST entries prefixed
-# "zfssend:"). This file exists so the backend dispatch introduced in
-# backup/bckp_hdlr.sh (see the FIX #41 comment there) has something real to
-# call - the actual zfs send/receive implementation (bookmarks, resumable
-# receive, target pool lifecycle) is a separate, later piece of work.
-# Until that lands, backendZfsSend() fails loudly and specifically, so a
-# REPOLIST entry using "zfssend:" today gets a clear, actionable error
-# instead of being silently skipped or mishandled by the borg codepath.
+# zfs-send backend (REPOLIST entries prefixed "zfssend:"), called from the
+# backend dispatch in backup/bckp_hdlr.sh (see the FIX #41 comment there).
+#
+# Implemented so far:
+#   FIX #42 (step 1): first-time full send/receive to a fresh target, with
+#            automatic parent-dataset creation on the target.
+#   FIX #43 (step 3): bookmark-based incremental sends for every subsequent
+#            call - the bookmark survives source-side retention deleting
+#            the snapshot it was created from, which a plain
+#            snapshot-to-snapshot incremental could not (see the
+#            conversation this was designed in for why step 2, plain
+#            snapshot-based incrementals, was skipped deliberately).
+#
+# Not yet implemented (deliberately, each is its own later, separately
+# tested increment): resumable receive, target readonly + separate
+# target-side retention, removable-media pool import/export, raw send for
+# encrypted sources.
 # shellcheck disable=SC3043
 if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
     export ZFS_SEND_HDLR_SOURCED=1
@@ -55,10 +64,16 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         bckndZfsSend_keepduration="$5"
 
         bckndZfsSend_targetdataset="$bckndZfsSend_target/$bckndZfsSend_dataset"
+        # FIX #43: a bookmark name is scoped per-target (via this slug), so
+        # the same source dataset can be sent to more than one zfssend
+        # target, each tracked independently.
+        bckndZfsSend_targetslug=$(echo "$bckndZfsSend_target" | tr '/' '_')
         unset bckndZfsSend_target
         bckndZfsSend_targetparent="${bckndZfsSend_targetdataset%/*}"
+        bckndZfsSend_bookmark="$bckndZfsSend_dataset#zfssend-$bckndZfsSend_targetslug"
+        unset bckndZfsSend_targetslug
 
-        msg "DEBUG" "backendZfsSend: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset (remote cmd: ${bckndZfsSend_remotecmd:-none}, keep $bckndZfsSend_keepduration)"
+        msg "DEBUG" "backendZfsSend: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset (remote cmd: ${bckndZfsSend_remotecmd:-none}, keep $bckndZfsSend_keepduration, bookmark $bckndZfsSend_bookmark)"
 
         # Ensure the parent dataset hierarchy exists on the target. zfs
         # receive creates exactly the leaf dataset it's given - it doesn't
@@ -69,22 +84,28 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
                 exec_cmd zfs create -p "$bckndZfsSend_targetparent"
             fi
         fi
+        unset bckndZfsSend_targetparent
 
-        # FIX #42, step 1 of the zfs-send backend: only the very first,
-        # full send is implemented so far. Incremental sends (step 2),
-        # bookmark-based chains that survive source-side retention (step
-        # 3), resumable receive (step 4), target readonly + separate
-        # target-side retention (step 5), and removable-media pool
-        # import/export (step 6) are deliberately not yet handled - each
-        # is its own later, separately tested increment.
+        # FIX #43: full vs incremental. If the target dataset already
+        # exists, this must be an incremental send, which requires the
+        # bookmark left behind by the previous successful send - a bookmark
+        # survives even if the snapshot it pointed to has since been
+        # destroyed by source-side retention (pruneZFSSnapshot), which is
+        # exactly the problem plain snapshot-to-snapshot incrementals can't
+        # survive.
+        bckndZfsSend_mode="full"
         if zfs list -H "$bckndZfsSend_targetdataset" >/dev/null 2>&1; then
-            unset bckndZfsSend_remotecmd
-            unset bckndZfsSend_keepduration
-            unset bckndZfsSend_targetparent
-            LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
-            unset bckndZfsSend_CALLINGFUCNTION
-            die "zfssend: target dataset '$bckndZfsSend_targetdataset' already exists - incremental sends aren't implemented yet (only the first, full send is). Destroy it manually if you want to re-run the initial send, or wait for incremental support."
+            if ! zfs list -t bookmark -H "$bckndZfsSend_bookmark" >/dev/null 2>&1; then
+                unset bckndZfsSend_remotecmd
+                unset bckndZfsSend_keepduration
+                unset bckndZfsSend_mode
+                die "zfssend: target dataset '$bckndZfsSend_targetdataset' already exists but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
+            fi
+            bckndZfsSend_mode="incremental"
         fi
+
+        bckndZfsSend_sendrc_file=$(mktemp)
+        bckndZfsSend_recvrc_file=$(mktemp)
 
         # The actual send|receive pipe. Both sides run in subshells (pipe
         # semantics), so - same lesson as FIX #37, but this time the data
@@ -92,32 +113,38 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # each side's exit code is written to its own temp file instead of
         # relying on the pipeline's own $? (which POSIX only defines as the
         # LAST command's exit code) or bash-only $PIPESTATUS.
-        bckndZfsSend_sendrc_file=$(mktemp)
-        bckndZfsSend_recvrc_file=$(mktemp)
-
-        msg "DEBUG" "Full send: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
-        msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive $bckndZfsSend_targetdataset"
-
-        { zfs send "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
-        { zfs receive "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+        if [ "$bckndZfsSend_mode" = "full" ]; then
+            msg "DEBUG" "Full send: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
+            msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive $bckndZfsSend_targetdataset"
+            { zfs send "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
+            { zfs receive "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+        else
+            msg "DEBUG" "Incremental send: $bckndZfsSend_bookmark -> $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
+            msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send -i $bckndZfsSend_bookmark $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive $bckndZfsSend_targetdataset"
+            { zfs send -i "$bckndZfsSend_bookmark" "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
+            { zfs receive "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+        fi
 
         bckndZfsSend_sendrc=$(cat "$bckndZfsSend_sendrc_file")
         bckndZfsSend_recvrc=$(cat "$bckndZfsSend_recvrc_file")
         rm -f "$bckndZfsSend_sendrc_file" "$bckndZfsSend_recvrc_file"
         msg "DEBUG" "send rc=$bckndZfsSend_sendrc, receive rc=$bckndZfsSend_recvrc"
 
-        LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
-        unset bckndZfsSend_CALLINGFUCNTION
-        unset bckndZfsSend_remotecmd
-        unset bckndZfsSend_keepduration
-        unset bckndZfsSend_targetparent
         unset bckndZfsSend_sendrc_file
         unset bckndZfsSend_recvrc_file
+        unset bckndZfsSend_remotecmd
+        unset bckndZfsSend_keepduration
 
+        # NOTE: LASTFUNC is deliberately NOT restored to the caller before
+        # these err_hdlr calls (fixing a latent bug from step 1, where it
+        # was restored too early and would have misattributed the failure
+        # to the wrong function in the error log).
         if [ "$bckndZfsSend_sendrc" -ne 0 ]; then
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
             unset bckndZfsSend_targetdataset
+            unset bckndZfsSend_bookmark
+            unset bckndZfsSend_mode
             unset bckndZfsSend_recvrc
             err_hdlr "$bckndZfsSend_sendrc"
         fi
@@ -125,13 +152,31 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
             unset bckndZfsSend_targetdataset
+            unset bckndZfsSend_bookmark
+            unset bckndZfsSend_mode
             err_hdlr "$bckndZfsSend_recvrc"
         fi
 
-        msg "INFO" "zfssend: full send of $bckndZfsSend_dataset@$bckndZfsSend_label to $bckndZfsSend_targetdataset succeeded"
+        msg "INFO" "zfssend: $bckndZfsSend_mode send of $bckndZfsSend_dataset@$bckndZfsSend_label to $bckndZfsSend_targetdataset succeeded"
+        unset bckndZfsSend_mode
+
+        # FIX #43: move the tracking bookmark forward to the snapshot just
+        # sent, so the next call can send incrementally from here. Only
+        # done after send+receive both succeeded - bookmarking a snapshot
+        # that was never actually replicated would silently break the next
+        # incremental (it would believe this snapshot IS on the target when
+        # it isn't). destroy the old bookmark first: zfs refuses to create
+        # one with a name that's already taken, and a bookmark can't be
+        # "moved" in place.
+        zfs destroy "$bckndZfsSend_bookmark" >/dev/null 2>&1
+        exec_cmd zfs bookmark "$bckndZfsSend_dataset@$bckndZfsSend_label" "$bckndZfsSend_bookmark"
+
+        LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
+        unset bckndZfsSend_CALLINGFUCNTION
         unset bckndZfsSend_dataset
         unset bckndZfsSend_label
         unset bckndZfsSend_targetdataset
+        unset bckndZfsSend_bookmark
         unset bckndZfsSend_sendrc
         unset bckndZfsSend_recvrc
         return 0

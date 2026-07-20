@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-19.8
+# TESTKIT_VERSION=2026-07-20.1
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -236,31 +236,47 @@ assert "FIX41b: explicit 'borg:' prefix run succeeds" "[ $RC_BORGPREFIX -eq 0 ]"
 assert "FIX41b: explicit 'borg:' prefix still creates a borg archive" \
   "grep -q \"borg create.*$WORKDIR3/repo1\" '$MOCK_LOG'"
 
-# FIX #42: zfs-send backend, step 1 - first full send only. Incremental
-# sends (a second call against an already-existing target) are not yet
-# supported and must fail with a specific, actionable message rather than
-# silently overwriting or crashing.
+# FIX #42/#43: zfs-send backend. Step 1 (full send only) plus step 3
+# (bookmark-based incremental, skipping the fragile plain-snapshot
+# intermediate step 2 entirely - see conversation).
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 sed "s|REPOLIST=.*|REPOLIST=\"zfssend:tank/zfssendtarget, \"|" "$WORKDIR3/test3.conf" > "$WORKDIR3/test3-zfssend.conf"
 
-# First run: target doesn't exist yet -> the full send must succeed.
+# First run: target doesn't exist yet -> the full send must succeed, and a
+# tracking bookmark must be created afterward.
 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend1.log" 2>&1
 RC_ZFSSEND1=$?
 assert "FIX42: first zfssend run (fresh target) succeeds" "[ $RC_ZFSSEND1 -eq 0 ]"
-assert "FIX42: zfs send was invoked for the source snapshot" \
+assert "FIX42: zfs send (full, no -i) was invoked for the source snapshot" \
   "grep -q 'zfs send tank/data@' '$MOCK_LOG'"
 assert "FIX42: zfs receive was invoked for the mirrored target path" \
   "grep -q 'zfs receive tank/zfssendtarget/tank/data' '$MOCK_LOG'"
 assert "FIX42: target dataset exists after the send (mirrored under the target prefix)" \
   "grep -q '^tank/zfssendtarget/tank/data' '$MOCK_STATE'"
+assert "FIX43: tracking bookmark was created after the first send" \
+  "grep -q '^tank/data#zfssend-tank_zfssendtarget\$' '$MOCK_STATE'"
 
-# Second run against the SAME (now-existing) target: must fail with the
-# specific incremental-not-supported message, not silently overwrite.
+# Second run against the SAME (now-existing) target: must send
+# incrementally FROM THE BOOKMARK (not a plain snapshot, not a full send),
+# and move the bookmark forward to the new snapshot afterward.
+: > "$MOCK_LOG"
 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend2.log" 2>&1
 RC_ZFSSEND2=$?
-assert "FIX42: second zfssend run (target already exists) fails" "[ $RC_ZFSSEND2 -ne 0 ]"
-assert "FIX42: second run gives the specific incremental-not-supported message" \
-  "grep -q \"already exists - incremental sends aren't implemented yet\" '$WORKDIR3/run_zfssend2.log'"
+assert "FIX43: second zfssend run (incremental via bookmark) succeeds" "[ $RC_ZFSSEND2 -eq 0 ]"
+assert "FIX43: zfs send -i used the bookmark as its base, not a plain snapshot" \
+  "grep -q 'zfs send -i tank/data#zfssend-tank_zfssendtarget tank/data@' '$MOCK_LOG'"
+assert "FIX43: bookmark still exists (recreated), pointing at the new snapshot" \
+  "grep -q '^tank/data#zfssend-tank_zfssendtarget\$' '$MOCK_STATE'"
+
+# Simulate a manually deleted bookmark while the target still exists - must
+# fail with the specific, actionable message, not silently re-send
+# everything or corrupt the target.
+zfs destroy "tank/data#zfssend-tank_zfssendtarget"
+sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend3.log" 2>&1
+RC_ZFSSEND3=$?
+assert "FIX43: target exists but bookmark missing -> run fails" "[ $RC_ZFSSEND3 -ne 0 ]"
+assert "FIX43: missing-bookmark run gives the specific actionable message" \
+  "grep -q 'tracking bookmark' '$WORKDIR3/run_zfssend3.log' && grep -q 'is missing' '$WORKDIR3/run_zfssend3.log'"
 
 # Fault injection on both sides of the send|receive pipe - this is the
 # whole point of the dual-tempfile exit-code pattern (see the comment in
@@ -276,6 +292,16 @@ assert "FIX42: a failing zfs send aborts the run" "[ $RC_SENDFAIL -ne 0 ]"
 MOCK_ZFS_FAIL_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_recvfail.log" 2>&1
 RC_RECVFAIL=$?
 assert "FIX42: a failing zfs receive aborts the run" "[ $RC_RECVFAIL -ne 0 ]"
+
+# FIX #43: a failing bookmark creation (after a successful send/receive)
+# must also abort the run, not silently leave the target without a usable
+# tracking bookmark for next time.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_FAIL_BOOKMARK=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_bookmarkfail.log" 2>&1
+RC_BOOKMARKFAIL=$?
+assert "FIX43: a failing bookmark creation aborts the run" "[ $RC_BOOKMARKFAIL -ne 0 ]"
+assert "FIX43: send and receive DID succeed before the bookmark failure (data wasn't lost)" \
+  "grep -q '^tank/zfssendtarget/tank/data' '$MOCK_STATE'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
