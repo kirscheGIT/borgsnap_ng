@@ -1,34 +1,46 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.1
+# TESTKIT_VERSION=2026-07-20.5
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot]|bookmark [-H]
-#            [-d 1] -o name [dataset], list [-H] <dataset> (plain existence
-#            check, no -t), send [-i base], receive, create [-p], bookmark,
-#            hold, release
+#            [-d 1] [-s prop] -o name [dataset], list [-H] <dataset> (plain
+#            existence check, no -t), send [-i base | -t token], receive
+#            [-s], get -H -o value receive_resume_token <dataset>,
+#            create [-p], bookmark, hold, release
 #
 # MOCK_STATE line conventions:
-#   "dataset@snapshot"     - a snapshot (as before)
-#   "dataset#bookmark"     - a bookmark (new, FIX #43)
-#   "dataset"              - a bare dataset with no snapshots yet (set by
-#                             `zfs create` and by `zfs receive`, needed so a
-#                             plain `zfs list dataset` existence check - used
-#                             by backendZfsSend, FIX #42 - can tell a
-#                             created-but-empty target apart from one that
-#                             doesn't exist at all)
+#   "dataset@snapshot"        - a snapshot (as before)
+#   "dataset#bookmark"        - a bookmark (FIX #43)
+#   "dataset"                 - a bare dataset with no snapshots yet (set by
+#                                `zfs create` and by `zfs receive`, needed so
+#                                a plain `zfs list dataset` existence check -
+#                                used by backendZfsSend, FIX #42 - can tell a
+#                                created-but-empty target apart from one
+#                                that doesn't exist at all)
+#   "dataset::resume::TOKEN"  - a pending resume token for that dataset
+#                                (FIX #44). TOKEN embeds the label it's for
+#                                (format "MOCKTOKEN::<label>::<random>") so
+#                                a later `send -t` can recover what's being
+#                                resumed - a real zfs stream embeds this
+#                                information itself; our mock has to fake it
+#                                explicitly since it doesn't move real bytes.
 #
 # Fault injection (for testing error-path fixes, unset/empty = normal behavior):
-#   MOCK_ZFS_FAIL_LIST=1      "zfs list" fails with exit 1, simulating e.g. a
-#                             pool that isn't imported. Used to verify FIX #37
-#                             (a failing zfs list must abort the run, not be
-#                             silently swallowed by a pipe into grep).
-#   MOCK_ZFS_FAIL_SEND=1      "zfs send" fails with exit 1 (e.g. simulating a
-#                             vanished source snapshot). Used for FIX #42.
-#   MOCK_ZFS_FAIL_RECEIVE=1   "zfs receive" fails with exit 1 (e.g. simulating
-#                             a full/unwritable target pool). Used for FIX #42.
-#   MOCK_ZFS_FAIL_BOOKMARK=1  "zfs bookmark" fails with exit 1 (e.g. simulating
-#                             a pool that doesn't support bookmarks). Used for
-#                             FIX #43.
+#   MOCK_ZFS_FAIL_LIST=1        "zfs list" fails with exit 1, simulating e.g.
+#                               a pool that isn't imported. FIX #37.
+#   MOCK_ZFS_FAIL_SEND=1        "zfs send" fails with exit 1 (e.g. a vanished
+#                               source snapshot). FIX #42.
+#   MOCK_ZFS_FAIL_RECEIVE=1     "zfs receive" fails with exit 1, no resume
+#                               token left behind (e.g. a full/unwritable
+#                               target pool - unrecoverable, not a transient
+#                               interruption). FIX #42.
+#   MOCK_ZFS_INTERRUPT_RECEIVE=1  "zfs receive -s" fails with exit 1 AND
+#                               leaves a resume token behind, simulating a
+#                               transient interruption (network loss,
+#                               process killed) rather than a hard failure.
+#                               FIX #44.
+#   MOCK_ZFS_FAIL_BOOKMARK=1    "zfs bookmark" fails with exit 1 (e.g. a pool
+#                               that doesn't support bookmarks). FIX #43.
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 : "${MOCK_STATE:=/tmp/borgsnap_mock.state}"
 touch "$MOCK_STATE"
@@ -58,14 +70,14 @@ case "$cmd" in
       echo "cannot open 'testpool': no such pool" >&2
       exit 1
     fi
-    # crude arg parse: detect -H, -t VALUE, -d 1, dataset filter (last
-    # non-option arg)
+    # crude arg parse: detect -H, -t VALUE, -s VALUE, -d 1, dataset filter
+    # (last non-option arg)
     H=0; ds=""; had_t=0; ttype=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -H) H=1 ;;
         -t) had_t=1; shift; ttype="$1" ;;
-        -o|-d) shift ;;
+        -o|-d|-s) shift ;;
         -Hr) H=1 ;;
         -*) : ;;
         *) ds="$1" ;;
@@ -99,7 +111,9 @@ case "$cmd" in
     elif [ "$had_t" = 1 ]; then
       # existing behavior: snapshot listing/filtering, always exit 0 - an
       # empty result legitimately means "no matching snapshots yet", not
-      # an error.
+      # an error. Insertion order in MOCK_STATE already matches creation
+      # order (we only ever append), so "-s creation" needs no extra
+      # sorting logic here.
       [ "$H" = 0 ] && echo "NAME"
       if [ -n "$ds" ]; then
         grep -E "^${ds}(/[^@#]+)?@" "$MOCK_STATE" 2>/dev/null
@@ -128,6 +142,19 @@ case "$cmd" in
       exit 0
     fi
     ;;
+  get)
+    # FIX #44: only supports the specific invocation backendZfsSend uses:
+    #   zfs get -H -o value receive_resume_token <dataset>
+    # The dataset is always the last positional argument.
+    ds=""
+    for a in "$@"; do ds="$a"; done
+    tok=$(grep "^${ds}::resume::" "$MOCK_STATE" 2>/dev/null | sed "s|^${ds}::resume::||")
+    if [ -n "$tok" ]; then
+      echo "$tok"
+    else
+      echo "-"
+    fi
+    exit 0 ;;
   create)
     [ "$1" = "-p" ] && shift
     ds="$1"
@@ -138,23 +165,57 @@ case "$cmd" in
       echo "cannot send: mock injected failure" >&2
       exit 1
     fi
-    # -i base target: real zfs send needs both endpoints to exist; the mock
-    # doesn't strictly enforce that, it just needs to emit a byte or two so
-    # the receive side has something to consume - the args are logged in
-    # $MOCK_LOG regardless, which is what the tests actually assert on.
-    printf 'MOCKSTREAM:%s\n' "$*"
+    # FIX #44: figure out the label being sent, so it can be embedded in
+    # the (fake) stream for the receive side to recover - real zfs embeds
+    # this in the actual stream bytes, our mock has to do so explicitly.
+    label=""
+    case "$1" in
+      -t)
+        # resume: token format is MOCKTOKEN::<label>::<random>
+        token="$2"
+        label=$(echo "$token" | awk -F'::' '{print $2}')
+        ;;
+      -i)
+        # incremental: -i <bookmark-or-snap> <dataset>@<label>
+        label="${3#*@}"
+        ;;
+      *)
+        # full: <dataset>@<label>
+        label="${1#*@}"
+        ;;
+    esac
+    printf 'MOCKSTREAM:LABEL=%s ARGS=%s\n' "$label" "$*"
     exit 0 ;;
   receive)
+    ds=""
+    for a in "$@"; do
+      case "$a" in
+        -s) ;;
+        *) ds="$a" ;;
+      esac
+    done
     # Always consume stdin fully, even on injected failure, so the
-    # upstream mock send side never blocks on a full pipe buffer.
-    cat > /dev/null
+    # upstream mock send side never blocks on a full pipe buffer. Extract
+    # the label the (fake) stream says it's carrying.
+    stream=$(cat)
+    label=$(printf '%s\n' "$stream" | sed -n 's/^MOCKSTREAM:LABEL=\([^ ]*\).*/\1/p' | head -1)
+
     if [ "${MOCK_ZFS_FAIL_RECEIVE:-0}" = 1 ]; then
       echo "cannot receive: mock injected failure" >&2
       exit 1
     fi
-    ds="$1"
+    if [ "${MOCK_ZFS_INTERRUPT_RECEIVE:-0}" = 1 ]; then
+      echo "cannot receive: mock injected simulated interruption" >&2
+      grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null && mv "$MOCK_STATE.tmp" "$MOCK_STATE"
+      echo "${ds}::resume::MOCKTOKEN::${label}::$$" >> "$MOCK_STATE"
+      exit 1
+    fi
+
     grep -qxF "$ds" "$MOCK_STATE" || echo "$ds" >> "$MOCK_STATE"
-    echo "${ds}@mockreceived" >> "$MOCK_STATE"
+    echo "${ds}@${label:-mockreceived}" >> "$MOCK_STATE"
+    # a completed receive clears any resume token that was pending for
+    # this dataset
+    grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null && mv "$MOCK_STATE.tmp" "$MOCK_STATE"
     exit 0 ;;
   bookmark)
     if [ "${MOCK_ZFS_FAIL_BOOKMARK:-0}" = 1 ]; then

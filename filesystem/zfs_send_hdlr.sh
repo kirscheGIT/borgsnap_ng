@@ -14,11 +14,17 @@
 #            snapshot-to-snapshot incremental could not (see the
 #            conversation this was designed in for why step 2, plain
 #            snapshot-based incrementals, was skipped deliberately).
+#   FIX #44 (step 4): resumable receive. Every zfs receive uses -s, and a
+#            leftover receive_resume_token is checked for and completed
+#            BEFORE anything else - an interrupted transfer might be for an
+#            older label than today's, so that call finishes only the old
+#            transfer and defers today's new backup to the next run rather
+#            than layering a fresh stream on a partially-received target.
 #
 # Not yet implemented (deliberately, each is its own later, separately
-# tested increment): resumable receive, target readonly + separate
-# target-side retention, removable-media pool import/export, raw send for
-# encrypted sources.
+# tested increment): target readonly + separate target-side retention,
+# removable-media pool import/export, raw send for encrypted sources,
+# remote (SSH) targets.
 # shellcheck disable=SC3043
 if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
     export ZFS_SEND_HDLR_SOURCED=1
@@ -86,22 +92,40 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         fi
         unset bckndZfsSend_targetparent
 
-        # FIX #43: full vs incremental. If the target dataset already
-        # exists, this must be an incremental send, which requires the
-        # bookmark left behind by the previous successful send - a bookmark
-        # survives even if the snapshot it pointed to has since been
-        # destroyed by source-side retention (pruneZFSSnapshot), which is
-        # exactly the problem plain snapshot-to-snapshot incrementals can't
-        # survive.
-        bckndZfsSend_mode="full"
-        if zfs list -H "$bckndZfsSend_targetdataset" >/dev/null 2>&1; then
+        # FIX #44: check for a leftover resume token FIRST, before deciding
+        # full vs incremental. If the target has an incomplete receive in
+        # progress (a previous call got interrupted - network loss, process
+        # killed, power loss), that must be finished before anything new is
+        # attempted; layering a fresh stream on top of a partially-received
+        # dataset isn't a coherent operation. A resumed transfer may be for
+        # an OLDER label than today's $bckndZfsSend_label (e.g. yesterday's
+        # daily got interrupted and never retried) - so this call completes
+        # only that old transfer and returns; today's new backup, if any,
+        # goes out on the next run once the target is in a clean state
+        # again.
+        bckndZfsSend_resumetoken=$(zfs get -H -o value receive_resume_token "$bckndZfsSend_targetdataset" 2>/dev/null)
+        [ "$bckndZfsSend_resumetoken" = "-" ] && bckndZfsSend_resumetoken=""
+
+        if [ -n "$bckndZfsSend_resumetoken" ]; then
+            bckndZfsSend_mode="resume"
+        elif zfs list -H "$bckndZfsSend_targetdataset" >/dev/null 2>&1; then
+            # FIX #43: full vs incremental. If the target dataset already
+            # exists (and there's no resume in progress), this must be an
+            # incremental send, which requires the bookmark left behind by
+            # the previous successful send - a bookmark survives even if
+            # the snapshot it pointed to has since been destroyed by
+            # source-side retention (pruneZFSSnapshot), which is exactly
+            # the problem plain snapshot-to-snapshot incrementals can't
+            # survive.
             if ! zfs list -t bookmark -H "$bckndZfsSend_bookmark" >/dev/null 2>&1; then
                 unset bckndZfsSend_remotecmd
                 unset bckndZfsSend_keepduration
-                unset bckndZfsSend_mode
+                unset bckndZfsSend_resumetoken
                 die "zfssend: target dataset '$bckndZfsSend_targetdataset' already exists but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
             fi
             bckndZfsSend_mode="incremental"
+        else
+            bckndZfsSend_mode="full"
         fi
 
         bckndZfsSend_sendrc_file=$(mktemp)
@@ -112,18 +136,31 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # itself is a binary stream and can't go through a $(...) capture -
         # each side's exit code is written to its own temp file instead of
         # relying on the pipeline's own $? (which POSIX only defines as the
-        # LAST command's exit code) or bash-only $PIPESTATUS.
-        if [ "$bckndZfsSend_mode" = "full" ]; then
-            msg "DEBUG" "Full send: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
-            msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive $bckndZfsSend_targetdataset"
-            { zfs send "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
-            { zfs receive "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
-        else
-            msg "DEBUG" "Incremental send: $bckndZfsSend_bookmark -> $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
-            msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send -i $bckndZfsSend_bookmark $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive $bckndZfsSend_targetdataset"
-            { zfs send -i "$bckndZfsSend_bookmark" "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
-            { zfs receive "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
-        fi
+        # LAST command's exit code) or bash-only $PIPESTATUS. `-s` on every
+        # receive is what makes an interruption resumable in the first
+        # place - without it, a killed receive just leaves a half-received,
+        # unrecoverable dataset.
+        case "$bckndZfsSend_mode" in
+            resume)
+                msg "DEBUG" "Resuming interrupted transfer to $bckndZfsSend_targetdataset (today's new backup, if any, will follow on the next run)"
+                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send -t <token> | zfs receive -s $bckndZfsSend_targetdataset"
+                { zfs send -t "$bckndZfsSend_resumetoken"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
+                { zfs receive -s "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+                ;;
+            full)
+                msg "DEBUG" "Full send: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
+                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive -s $bckndZfsSend_targetdataset"
+                { zfs send "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
+                { zfs receive -s "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+                ;;
+            *)
+                msg "DEBUG" "Incremental send: $bckndZfsSend_bookmark -> $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
+                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send -i $bckndZfsSend_bookmark $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive -s $bckndZfsSend_targetdataset"
+                { zfs send -i "$bckndZfsSend_bookmark" "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
+                { zfs receive -s "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+                ;;
+        esac
+        unset bckndZfsSend_resumetoken
 
         bckndZfsSend_sendrc=$(cat "$bckndZfsSend_sendrc_file")
         bckndZfsSend_recvrc=$(cat "$bckndZfsSend_recvrc_file")
@@ -138,7 +175,10 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # NOTE: LASTFUNC is deliberately NOT restored to the caller before
         # these err_hdlr calls (fixing a latent bug from step 1, where it
         # was restored too early and would have misattributed the failure
-        # to the wrong function in the error log).
+        # to the wrong function in the error log). A failed resume leaves
+        # the resume token in place (the mock and real zfs both do this
+        # automatically - the token is only cleared on a successful
+        # receive), so the next run will simply try to resume again.
         if [ "$bckndZfsSend_sendrc" -ne 0 ]; then
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
@@ -157,11 +197,34 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             err_hdlr "$bckndZfsSend_recvrc"
         fi
 
-        msg "INFO" "zfssend: $bckndZfsSend_mode send of $bckndZfsSend_dataset@$bckndZfsSend_label to $bckndZfsSend_targetdataset succeeded"
+        # FIX #44: for a resumed transfer, the label that actually landed
+        # may not be today's $bckndZfsSend_label - it's whatever the
+        # interrupted transfer was originally for. Query the target's own
+        # newest snapshot instead of trusting the parameter, so the
+        # bookmark ends up pointing at what's really there.
+        if [ "$bckndZfsSend_mode" = "resume" ]; then
+            bckndZfsSend_landedlabel=$(zfs list -H -o name -t snapshot -s creation "$bckndZfsSend_targetdataset" 2>/dev/null | tail -1)
+            bckndZfsSend_landedlabel="${bckndZfsSend_landedlabel#*@}"
+            if [ -z "$bckndZfsSend_landedlabel" ]; then
+                unset bckndZfsSend_dataset
+                unset bckndZfsSend_targetdataset
+                unset bckndZfsSend_bookmark
+                unset bckndZfsSend_mode
+                unset bckndZfsSend_sendrc
+                unset bckndZfsSend_recvrc
+                die "zfssend: resume of $bckndZfsSend_targetdataset reported success, but no snapshot could be found on the target afterward - refusing to guess which label to bookmark."
+            fi
+            bckndZfsSend_label="$bckndZfsSend_landedlabel"
+            unset bckndZfsSend_landedlabel
+            msg "INFO" "zfssend: resumed and completed an interrupted transfer for $bckndZfsSend_dataset@$bckndZfsSend_label to $bckndZfsSend_targetdataset - today's new backup (if different) will be sent on the next run"
+        else
+            msg "INFO" "zfssend: $bckndZfsSend_mode send of $bckndZfsSend_dataset@$bckndZfsSend_label to $bckndZfsSend_targetdataset succeeded"
+        fi
         unset bckndZfsSend_mode
 
         # FIX #43: move the tracking bookmark forward to the snapshot just
-        # sent, so the next call can send incrementally from here. Only
+        # sent (or, for a resume, to whatever snapshot actually landed - see
+        # above), so the next call can send incrementally from here. Only
         # done after send+receive both succeeded - bookmarking a snapshot
         # that was never actually replicated would silently break the next
         # incremental (it would believe this snapshot IS on the target when

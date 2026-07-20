@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.1
+# TESTKIT_VERSION=2026-07-20.5
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.1
+# TESTKIT_VERSION=2026-07-20.5
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.1"
+TESTKIT_VERSION="2026-07-20.5"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -100,6 +100,7 @@ preflight_check_marker "borg/borg_hdlr.sh" "FIX #41"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #41"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #43"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #44"
 preflight_check_marker "cfg_file_hdlr.sh" "FIX #40"
 preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #35"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #36"
@@ -138,6 +139,7 @@ command -v limactl >/dev/null 2>&1 || { echo "limactl not found - brew install l
 MOCK_RESULT="skipped"
 REAL_RESULT="skipped"
 REAL_ZFSSEND_RESULT="skipped"
+REAL_RESUME_RESULT="skipped"
 REAL_TESTDIR="/home/__USER__/borgsnap-integration-test"  # __USER__ resolved below
 
 # =========================================================================
@@ -369,6 +371,118 @@ CONF
               zfs destroy 'testpool/data#zfssend-testpool_zfssendtarget' 2>/dev/null || true
             "
           fi
+
+          # FIX #44: real resumable-receive test. Uses process-kill to
+          # interrupt a real transfer - from ZFS's perspective this is
+          # indistinguishable from a network loss (a receive that just
+          # stops getting bytes), and needs no second network interface to
+          # simulate. A real, sizable (incompressible) dataset is used so
+          # the transfer has an actual time window to interrupt - too small
+          # and the kill might land after it already finished.
+          if [ "$REAL_ZFSSEND_RESULT" = "PASS" ]; then
+            echo ""
+            echo "==> Testing real resumable receive via process-kill (FIX #44)..."
+            set +e
+            limactl shell zfs-dev sudo sh -c "
+              set -e
+              echo 'STEP: cleaning up any stale state from a previous attempt'
+              zfs destroy -r testpool/zfsresumetarget 2>/dev/null || true
+              zfs destroy -r testpool/bigdata 2>/dev/null || true
+              zfs destroy 'testpool/bigdata#zfssend-testpool_zfsresumetarget' 2>/dev/null || true
+
+              echo 'STEP: zfs create testpool/bigdata'
+              zfs create testpool/bigdata
+              echo 'STEP: dd 500MiB of random data'
+              dd if=/dev/urandom of=/testpool/bigdata/bigfile bs=1M count=500 2>&1 | tail -3
+              echo 'STEP: zfs snapshot testpool/bigdata@snap1'
+              zfs snapshot testpool/bigdata@snap1
+              echo 'STEP: zfs create -p testpool/zfsresumetarget/testpool'
+              zfs create -p testpool/zfsresumetarget/testpool 2>/dev/null || true
+
+              echo 'STEP: starting interrupted transfer via mkfifo + timeout'
+              rm -f /tmp/zfssendpipe
+              mkfifo /tmp/zfssendpipe
+              zfs send testpool/bigdata@snap1 > /tmp/zfssendpipe 2>/tmp/zfssend.err &
+              SENDPID=\$!
+              echo \"send backgrounded, PID=\$SENDPID\"
+              set +e
+              timeout --signal=KILL 0.5 zfs receive -s testpool/zfsresumetarget/testpool/bigdata < /tmp/zfssendpipe
+              TIMEOUTRC=\$?
+              set -e
+              echo \"timeout/receive rc=\$TIMEOUTRC (124 or 137 means it was killed as expected; 0 would mean it finished before the timeout - data set may need to be bigger)\"
+              rm -f /tmp/zfssendpipe
+              cat /tmp/zfssend.err 2>/dev/null || true
+              rm -f /tmp/zfssend.err
+              echo 'STEP: interruption sequence complete'
+              sleep 0.5
+
+              echo '--- resume token after interruption ---'
+              zfs get -H -o value receive_resume_token testpool/zfsresumetarget/testpool/bigdata
+            "
+            REAL_RESUME_SETUP_RC=$?
+            set -e
+            if [ "$REAL_RESUME_SETUP_RC" -eq 0 ]; then
+              echo ""
+              echo "==> Running borgsnap_ng.sh so it detects and completes the resume itself..."
+              limactl shell zfs-dev sudo sh -c "
+                cd '$REPO_IN_VM'
+                cat > '$REAL_TESTDIR/test-zfsresume.conf' << CONF
+LOCAL_BORG_USER=\"root\"
+FS=\"testpool/bigdata,\"
+COMPRESS=\"zstd,9\"
+CACHEMODE=\"mtime,size\"
+PASS=\"$REAL_TESTDIR/test.key\"
+BASEDIR=\"\"
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST=\"zfssend:testpool/zfsresumetarget, \"
+REPOSKIP=\"NONE\"
+RETENTIONPERIOD=\"monthly,1;weekly,4;daily,7\"
+PRE_SCRIPT=
+POST_SCRIPT=
+CONF
+                sh borgsnap_ng.sh run '$REAL_TESTDIR/test-zfsresume.conf'
+              "
+              set +e
+              REAL_RESUME_RC=$?
+              set -e
+              if [ "$REAL_RESUME_RC" -eq 0 ]; then
+                set +e
+                limactl shell zfs-dev sudo sh -c "
+                  echo '--- resume token after our own resume (should be cleared) ---'
+                  zfs get -H -o value receive_resume_token testpool/zfsresumetarget/testpool/bigdata
+                  echo '--- checksum comparison ---'
+                  SRC_SUM=\$(sha256sum /testpool/bigdata/bigfile | awk '{print \$1}')
+                  TGT_MOUNTPOINT=\$(zfs get -H -o value mountpoint testpool/zfsresumetarget/testpool/bigdata)
+                  TGT_SUM=\$(sha256sum \"\$TGT_MOUNTPOINT/bigfile\" | awk '{print \$1}')
+                  echo \"source: \$SRC_SUM\"
+                  echo \"target: \$TGT_SUM\"
+                  if [ \"\$SRC_SUM\" != \"\$TGT_SUM\" ]; then
+                    echo 'CHECKSUM MISMATCH' >&2
+                    exit 1
+                  fi
+                  echo 'CHECKSUM MATCH'
+                "
+                REAL_RESUME_VERIFY_RC=$?
+                set -e
+                if [ "$REAL_RESUME_VERIFY_RC" -eq 0 ]; then
+                  REAL_RESUME_RESULT="PASS"
+                else
+                  REAL_RESUME_RESULT="FAIL (resume run succeeded, checksum/token verification failed)"
+                fi
+              else
+                REAL_RESUME_RESULT="FAIL (resume run exit $REAL_RESUME_RC)"
+              fi
+            else
+              REAL_RESUME_RESULT="FAIL (could not set up interrupted transfer)"
+            fi
+            if [ "$KEEP" -eq 0 ]; then
+              limactl shell zfs-dev sudo sh -c "
+                zfs destroy -r testpool/zfsresumetarget 2>/dev/null || true
+                zfs destroy -r testpool/bigdata 2>/dev/null || true
+                zfs destroy 'testpool/bigdata#zfssend-testpool_zfsresumetarget' 2>/dev/null || true
+              "
+            fi
+          fi
         fi
       else
         REAL_RESULT="FAIL (exit $REAL_RC)"
@@ -398,8 +512,9 @@ echo "=================================================================="
 printf '%-45s %s\n' "1. Mock harness (docker-dev)"  "$MOCK_RESULT"
 printf '%-45s %s\n' "2. Real ZFS run (zfs-dev)"      "$REAL_RESULT"
 printf '%-45s %s\n' "3. Real zfssend backend (zfs-dev)" "$REAL_ZFSSEND_RESULT"
+printf '%-45s %s\n' "4. Real resumable receive (zfs-dev)" "$REAL_RESUME_RESULT"
 
-case "$MOCK_RESULT$REAL_RESULT$REAL_ZFSSEND_RESULT" in
+case "$MOCK_RESULT$REAL_RESULT$REAL_ZFSSEND_RESULT$REAL_RESUME_RESULT" in
   *FAIL*) exit 1 ;;
   *) exit 0 ;;
 esac

@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.1
+# TESTKIT_VERSION=2026-07-20.5
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -249,8 +249,8 @@ RC_ZFSSEND1=$?
 assert "FIX42: first zfssend run (fresh target) succeeds" "[ $RC_ZFSSEND1 -eq 0 ]"
 assert "FIX42: zfs send (full, no -i) was invoked for the source snapshot" \
   "grep -q 'zfs send tank/data@' '$MOCK_LOG'"
-assert "FIX42: zfs receive was invoked for the mirrored target path" \
-  "grep -q 'zfs receive tank/zfssendtarget/tank/data' '$MOCK_LOG'"
+assert "FIX42: zfs receive -s was invoked for the mirrored target path" \
+  "grep -q 'zfs receive -s tank/zfssendtarget/tank/data' '$MOCK_LOG'"
 assert "FIX42: target dataset exists after the send (mirrored under the target prefix)" \
   "grep -q '^tank/zfssendtarget/tank/data' '$MOCK_STATE'"
 assert "FIX43: tracking bookmark was created after the first send" \
@@ -302,6 +302,47 @@ RC_BOOKMARKFAIL=$?
 assert "FIX43: a failing bookmark creation aborts the run" "[ $RC_BOOKMARKFAIL -ne 0 ]"
 assert "FIX43: send and receive DID succeed before the bookmark failure (data wasn't lost)" \
   "grep -q '^tank/zfssendtarget/tank/data' '$MOCK_STATE'"
+
+echo "-------------------------------------"
+echo "Resumable receive (FIX #44)"
+echo "-------------------------------------"
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+
+# An interrupted first-ever send: the run must fail, and a resume token
+# must be left behind - not silently lost, not a hard unrecoverable
+# failure.
+MOCK_ZFS_INTERRUPT_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_interrupt1.log" 2>&1
+RC_INTERRUPT1=$?
+assert "FIX44: an interrupted send fails the run" "[ $RC_INTERRUPT1 -ne 0 ]"
+assert "FIX44: a resume token is left behind after interruption" \
+  "grep -q '^tank/zfssendtarget/tank/data::resume::' '$MOCK_STATE'"
+
+# The next run (no interrupt flag) must detect and complete the resume via
+# 'zfs send -t', not attempt a fresh send.
+: > "$MOCK_LOG"
+sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_resume.log" 2>&1
+RC_RESUME=$?
+assert "FIX44: the next run resumes and succeeds" "[ $RC_RESUME -eq 0 ]"
+assert "FIX44: zfs send -t (resume) was used, not a fresh send" \
+  "grep -q 'zfs send -t MOCKTOKEN' '$MOCK_LOG'"
+assert "FIX44: exactly one snapshot landed on the target (the resumed one only - today's new backup is deferred to the next run)" \
+  "[ \$(zfs list -H -t snapshot -o name tank/zfssendtarget/tank/data 2>/dev/null | wc -l) -eq 1 ]"
+assert "FIX44: resume token is cleared after successful completion" \
+  "! grep -q '^tank/zfssendtarget/tank/data::resume::' '$MOCK_STATE'"
+assert "FIX44: bookmark exists, pointing at the resumed (originally interrupted) label" \
+  "grep -q '^tank/data#zfssend-tank_zfssendtarget\$' '$MOCK_STATE'"
+
+# A second interruption DURING the resume attempt itself: the token must
+# survive so a future run can retry - it must not be silently lost just
+# because the retry also failed.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_INTERRUPT_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > /dev/null 2>&1
+MOCK_ZFS_INTERRUPT_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_doubleinterrupt.log" 2>&1
+RC_DOUBLEINTERRUPT=$?
+assert "FIX44: a second interruption during resume also fails the run" "[ $RC_DOUBLEINTERRUPT -ne 0 ]"
+assert "FIX44: resume token survives a repeated interruption (not lost)" \
+  "grep -q '^tank/zfssendtarget/tank/data::resume::' '$MOCK_STATE'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
