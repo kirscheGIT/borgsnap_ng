@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.5
+# TESTKIT_VERSION=2026-07-20.7
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.5
+# TESTKIT_VERSION=2026-07-20.7
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.5"
+TESTKIT_VERSION="2026-07-20.7"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -101,6 +101,7 @@ preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #41"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #43"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #44"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #45"
 preflight_check_marker "cfg_file_hdlr.sh" "FIX #40"
 preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #35"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #36"
@@ -348,6 +349,13 @@ CONF
                   fi
                   echo '--- tracking bookmark after incremental (should still exist, now pointing at the newer snapshot) ---'
                   zfs list -t bookmark -r testpool/data 2>&1
+                  echo '--- readonly property on target (FIX #45, must be on) ---'
+                  RO=\$(zfs get -H -o value readonly testpool/zfssendtarget/testpool/data)
+                  echo \"readonly=\$RO\"
+                  if [ \"\$RO\" != \"on\" ]; then
+                    echo \"ERROR: expected readonly=on, got '\$RO'\" >&2
+                    exit 1
+                  fi
                 "
                 REAL_ZFSSEND_INCR_VERIFY_RC=$?
                 set -e
@@ -394,15 +402,15 @@ CONF
               zfs create testpool/bigdata
               echo 'STEP: dd 500MiB of random data'
               dd if=/dev/urandom of=/testpool/bigdata/bigfile bs=1M count=500 2>&1 | tail -3
-              echo 'STEP: zfs snapshot testpool/bigdata@snap1'
-              zfs snapshot testpool/bigdata@snap1
+              echo 'STEP: zfs snapshot testpool/bigdata@daily-20250101'
+              zfs snapshot testpool/bigdata@daily-20250101
               echo 'STEP: zfs create -p testpool/zfsresumetarget/testpool'
               zfs create -p testpool/zfsresumetarget/testpool 2>/dev/null || true
 
               echo 'STEP: starting interrupted transfer via mkfifo + timeout'
               rm -f /tmp/zfssendpipe
               mkfifo /tmp/zfssendpipe
-              zfs send testpool/bigdata@snap1 > /tmp/zfssendpipe 2>/tmp/zfssend.err &
+              zfs send testpool/bigdata@daily-20250101 > /tmp/zfssendpipe 2>/tmp/zfssend.err &
               SENDPID=\$!
               echo \"send backgrounded, PID=\$SENDPID\"
               set +e

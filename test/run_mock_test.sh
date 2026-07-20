@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.5
+# TESTKIT_VERSION=2026-07-20.7
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -343,6 +343,48 @@ RC_DOUBLEINTERRUPT=$?
 assert "FIX44: a second interruption during resume also fails the run" "[ $RC_DOUBLEINTERRUPT -ne 0 ]"
 assert "FIX44: resume token survives a repeated interruption (not lost)" \
   "grep -q '^tank/zfssendtarget/tank/data::resume::' '$MOCK_STATE'"
+
+echo "-------------------------------------"
+echo "Target readonly + retention (FIX #45)"
+echo "-------------------------------------"
+
+# readonly=on: dedicated fresh full-send scenario (can't reuse an earlier
+# scenario's log - it's been reset multiple times since by the FIX43/44
+# tests).
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_readonly.log" 2>&1
+RC_READONLY=$?
+assert "FIX45: fresh zfssend run for the readonly check succeeds" "[ $RC_READONLY -eq 0 ]"
+assert "FIX45: readonly=on is set on the target after a successful send" \
+  "grep -q 'zfs set readonly=on tank/zfssendtarget/tank/data' '$MOCK_LOG'"
+
+# Direct unit-style test of pruneZFSSnapshot reused against a target
+# dataset - proves the exact claim step 5 relies on: the function is fully
+# generic and needs no target-specific variant. Pre-seed 9 old daily
+# snapshots (matching the keep-daily=7 used elsewhere in this test) plus
+# today's, so pruning has real work to do.
+: > "$MOCK_STATE"; : > "$MOCK_LOG"
+for d in 01 02 03 04 05 06 07 08 09 10; do
+  echo "tank/prunetarget/tank/data@daily-202607$d" >> "$MOCK_STATE"
+done
+
+(
+  cd "$REPOROOT" || exit 1
+  msg() { :; }
+  export MSG_DEFINED=1 LASTFUNC=""
+  # shellcheck disable=SC1091
+  . ./common/msg_and_err_hdlr.sh
+  # shellcheck disable=SC1091
+  . ./filesystem/zfs_hdlr.sh
+  pruneZFSSnapshot "tank/prunetarget/tank/data" "daily-99999999" "7" ""
+) >/dev/null 2>&1
+
+assert "FIX45: target-side prune (via reused pruneZFSSnapshot) destroys exactly the oldest 3 (10 found, keep 7)" \
+  "[ \$(grep -c 'zfs destroy -r tank/prunetarget/tank/data@' '$MOCK_LOG') -eq 3 ]"
+assert "FIX45: target-side prune keeps the newest snapshot (daily-20260710)" \
+  "! grep -q 'zfs destroy -r tank/prunetarget/tank/data@daily-20260710' '$MOCK_LOG'"
+assert "FIX45: target-side prune destroys the oldest (daily-20260701)" \
+  "grep -q 'zfs destroy -r tank/prunetarget/tank/data@daily-20260701' '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

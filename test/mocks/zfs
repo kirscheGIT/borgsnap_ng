@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.5
+# TESTKIT_VERSION=2026-07-20.7
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot]|bookmark [-H]
@@ -63,7 +63,8 @@ case "$cmd" in
   destroy)
     [ "$1" = "-r" ] && shift
     snap="$1"
-    grep -vxF "$snap" "$MOCK_STATE" > "$MOCK_STATE.tmp" && mv "$MOCK_STATE.tmp" "$MOCK_STATE"
+    grep -vxF "$snap" "$MOCK_STATE" > "$MOCK_STATE.tmp"
+    mv "$MOCK_STATE.tmp" "$MOCK_STATE" 2>/dev/null || true
     exit 0 ;;
   list)
     if [ "${MOCK_ZFS_FAIL_LIST:-0}" = 1 ]; then
@@ -206,7 +207,8 @@ case "$cmd" in
     fi
     if [ "${MOCK_ZFS_INTERRUPT_RECEIVE:-0}" = 1 ]; then
       echo "cannot receive: mock injected simulated interruption" >&2
-      grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null && mv "$MOCK_STATE.tmp" "$MOCK_STATE"
+      grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null
+    mv "$MOCK_STATE.tmp" "$MOCK_STATE" 2>/dev/null || true
       echo "${ds}::resume::MOCKTOKEN::${label}::$$" >> "$MOCK_STATE"
       exit 1
     fi
@@ -215,7 +217,8 @@ case "$cmd" in
     echo "${ds}@${label:-mockreceived}" >> "$MOCK_STATE"
     # a completed receive clears any resume token that was pending for
     # this dataset
-    grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null && mv "$MOCK_STATE.tmp" "$MOCK_STATE"
+    grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null
+    mv "$MOCK_STATE.tmp" "$MOCK_STATE" 2>/dev/null || true
     exit 0 ;;
   bookmark)
     if [ "${MOCK_ZFS_FAIL_BOOKMARK:-0}" = 1 ]; then
@@ -224,6 +227,17 @@ case "$cmd" in
     fi
     bmk="$2"
     grep -qxF "$bmk" "$MOCK_STATE" || echo "$bmk" >> "$MOCK_STATE"
+    exit 0 ;;
+  set)
+    # zfs set property=value dataset - logged via the top-level MOCK_LOG
+    # line already; recorded here too in case a future test wants to
+    # assert on the property value itself, not just that the command ran.
+    propval="$1"; ds="$2"
+    propname="${propval%%=*}"
+    propvalue="${propval#*=}"
+    grep -vE "^${ds}::prop::${propname}::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null
+    mv "$MOCK_STATE.tmp" "$MOCK_STATE" 2>/dev/null || true
+    echo "${ds}::prop::${propname}::${propvalue}" >> "$MOCK_STATE"
     exit 0 ;;
   hold|release) exit 0 ;;
   *) exit 0 ;;

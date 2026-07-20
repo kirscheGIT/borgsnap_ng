@@ -20,11 +20,16 @@
 #            older label than today's, so that call finishes only the old
 #            transfer and defers today's new backup to the next run rather
 #            than layering a fresh stream on a partially-received target.
+#   FIX #45 (step 5): readonly=on on the target after every successful
+#            send (zfs receive itself still works fine against a readonly
+#            target - only normal POSIX writes are blocked), plus
+#            target-side retention by reusing pruneZFSSnapshot as-is
+#            against the target dataset instead of the source - it's fully
+#            generic and needed no target-specific variant.
 #
 # Not yet implemented (deliberately, each is its own later, separately
-# tested increment): target readonly + separate target-side retention,
-# removable-media pool import/export, raw send for encrypted sources,
-# remote (SSH) targets.
+# tested increment): removable-media pool import/export, raw send for
+# encrypted sources, remote (SSH) targets.
 # shellcheck disable=SC3043
 if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
     export ZFS_SEND_HDLR_SOURCED=1
@@ -170,7 +175,6 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         unset bckndZfsSend_sendrc_file
         unset bckndZfsSend_recvrc_file
         unset bckndZfsSend_remotecmd
-        unset bckndZfsSend_keepduration
 
         # NOTE: LASTFUNC is deliberately NOT restored to the caller before
         # these err_hdlr calls (fixing a latent bug from step 1, where it
@@ -185,6 +189,7 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_targetdataset
             unset bckndZfsSend_bookmark
             unset bckndZfsSend_mode
+            unset bckndZfsSend_keepduration
             unset bckndZfsSend_recvrc
             err_hdlr "$bckndZfsSend_sendrc"
         fi
@@ -194,6 +199,7 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_targetdataset
             unset bckndZfsSend_bookmark
             unset bckndZfsSend_mode
+            unset bckndZfsSend_keepduration
             err_hdlr "$bckndZfsSend_recvrc"
         fi
 
@@ -234,12 +240,27 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         zfs destroy "$bckndZfsSend_bookmark" >/dev/null 2>&1
         exec_cmd zfs bookmark "$bckndZfsSend_dataset@$bckndZfsSend_label" "$bckndZfsSend_bookmark"
 
+        # FIX #45: readonly=on protects the received dataset from
+        # accidental manual writes. Real zfs receive (full, incremental, or
+        # resumed) still works fine against a readonly=on target -
+        # readonly only blocks normal POSIX file writes, not zfs-level
+        # receive operations - so this is safe to set unconditionally
+        # after every successful send.
+        exec_cmd zfs set readonly=on "$bckndZfsSend_targetdataset"
+
+        # FIX #45: target-side retention, reusing pruneZFSSnapshot as-is -
+        # it's fully generic (just a dataset name + label + keepduration,
+        # nothing source-specific baked in). Without this, the target would
+        # accumulate every sent snapshot forever.
+        pruneZFSSnapshot "$bckndZfsSend_targetdataset" "$bckndZfsSend_label" "$bckndZfsSend_keepduration" ""
+
         LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
         unset bckndZfsSend_CALLINGFUCNTION
         unset bckndZfsSend_dataset
         unset bckndZfsSend_label
         unset bckndZfsSend_targetdataset
         unset bckndZfsSend_bookmark
+        unset bckndZfsSend_keepduration
         unset bckndZfsSend_sendrc
         unset bckndZfsSend_recvrc
         return 0
