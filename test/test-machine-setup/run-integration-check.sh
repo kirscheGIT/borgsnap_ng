@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.9
+# TESTKIT_VERSION=2026-07-20.10
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.9
+# TESTKIT_VERSION=2026-07-20.10
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.9"
+TESTKIT_VERSION="2026-07-20.10"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -114,6 +114,7 @@ if [ ! -f "$REPO_ROOT/mail_wrapper.sh" ]; then
   preflight_fail=1
 else
   preflight_check_marker "mail_wrapper.sh" "FIX #47"
+  preflight_check_marker "mail_wrapper.sh" "FIX #48"
 fi
 if [ ! -f "$REPO_ROOT/test/mocks/sendmail" ]; then
   echo "PREFLIGHT: test/mocks/sendmail not found - this is a new file introduced by FIX #47, not just an update to an existing one" >&2

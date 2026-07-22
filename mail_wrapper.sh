@@ -7,6 +7,14 @@
 # a systemd timer+service - see ops/systemd/ for the systemd units, or the
 # crontab example in this file's own usage text below.
 #
+# FIX #48: an otherwise-successful run (exit 0) that logged any WARNING:
+# line (e.g. checkFilePerms flagging an insecure config/passphrase file)
+# is reported as "SUCCESS (with warnings)" with elevated - but not
+# maximum - priority, and the warning text is summarized right at the top
+# of the email, before the full log. Without this, such a warning would
+# be buried, unremarked, inside an ordinary SUCCESS email that most
+# people only glance at the subject line of.
+#
 # Why this exists instead of relying on cron's "mail on any output"
 # behavior or systemd's OnFailure=: neither gives control over the
 # subject line or message priority, and cron only mails when there's
@@ -96,9 +104,24 @@ cat "$mailwrap_logfile"
 
 mailwrap_endtime="$(date '+%Y-%m-%d %H:%M:%S')"
 
+# Scan the captured log for WARNING: lines regardless of overall exit
+# code - msg() always writes these to stderr (which we already captured
+# above), so a checkFilePerms permission warning, for example, would
+# otherwise be buried unnoticed inside an ordinary SUCCESS email's log
+# dump, with no distinguishing subject or priority to catch attention.
+mailwrap_warning_lines=$(grep "WARNING:" "$mailwrap_logfile")
+mailwrap_warning_count=$(printf '%s\n' "$mailwrap_warning_lines" | grep -c "WARNING:")
+[ -z "$mailwrap_warning_lines" ] && mailwrap_warning_count=0
+
 if [ "$mailwrap_rc" -eq 0 ]; then
-    mailwrap_status="SUCCESS"
-    mailwrap_priority_headers=""
+    if [ "$mailwrap_warning_count" -gt 0 ]; then
+        mailwrap_status="SUCCESS (with warnings)"
+        mailwrap_priority_headers="X-Priority: 2 (High)
+Importance: High"
+    else
+        mailwrap_status="SUCCESS"
+        mailwrap_priority_headers=""
+    fi
 else
     mailwrap_status="FAILURE"
     mailwrap_priority_headers="X-Priority: 1 (Highest)
@@ -120,6 +143,11 @@ mailwrap_subject="[borgsnap_ng] $mailwrap_status: $mailwrap_hostname / $mailwrap
     echo "Started:         $mailwrap_starttime"
     echo "Finished:        $mailwrap_endtime"
     echo "Exit code:       $mailwrap_rc"
+    if [ "$mailwrap_warning_count" -gt 0 ]; then
+        echo ""
+        echo "--- $mailwrap_warning_count warning(s) detected (see full log below for context) ---"
+        printf '%s\n' "$mailwrap_warning_lines"
+    fi
     echo ""
     echo "--- Log output ---"
     cat "$mailwrap_logfile"

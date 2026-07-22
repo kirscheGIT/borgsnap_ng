@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.9
+# TESTKIT_VERSION=2026-07-20.10
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -475,12 +475,13 @@ echo "-------------------------------------"
 
 WORKDIR6="$(mktemp -d)"
 mkdir -p "$WORKDIR6/repo1"
+MAILKEYFILE="$WORKDIR6/mail_test.key"; echo "testpassphrase" > "$MAILKEYFILE"; chmod 600 "$MAILKEYFILE"
 cat > "$WORKDIR6/test6-mail.conf" << EOF6
 LOCAL_BORG_USER="$(id -un)"
 FS="tank/data,"
 COMPRESS="zstd,9"
 CACHEMODE="mtime,size"
-PASS="$KEYFILE"
+PASS="$MAILKEYFILE"
 BASEDIR=""
 LOCAL_READABLE_BY_OTHERS=false
 REPOLIST="$WORKDIR6/repo1, "
@@ -490,6 +491,7 @@ PRE_SCRIPT=
 POST_SCRIPT=
 MAILTO="admin@example.com"
 EOF6
+chmod 600 "$WORKDIR6/test6-mail.conf"
 
 export MOCK_LOG="$WORKDIR6/mock.log"
 export MOCK_STATE="$WORKDIR6/mock.state"
@@ -544,6 +546,43 @@ sh ./mail_wrapper.sh "$WORKDIR6/test6-nomail.conf" > "$WORKDIR6/wrap_nomail.log"
 RC_NOMAIL=$?
 assert "FIX47: without MAILTO, the run still succeeds normally" "[ $RC_NOMAIL -eq 0 ]"
 assert "FIX47: without MAILTO, no email is sent" "[ ! -s '$MOCK_MAIL_LOG' ]"
+
+echo "-------------------------------------"
+echo "Success-with-warnings escalation (FIX #48)"
+echo "-------------------------------------"
+
+# Deliberately NOT chmod 600 - checkFilePerms (FIX #40) will warn about it,
+# even though the backup itself succeeds. That's exactly the case FIX #48
+# closes: without it, this warning would be buried, unremarked, inside an
+# ordinary SUCCESS email.
+cat > "$WORKDIR6/test6-warn.conf" << EOF8
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR6/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MAILTO="admin@example.com"
+EOF8
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"; : > "$MOCK_MAIL_LOG"
+sh ./mail_wrapper.sh "$WORKDIR6/test6-warn.conf" > "$WORKDIR6/wrap_warn.log" 2>&1
+RC_MAILWARN=$?
+assert "FIX48: a run with only a permission warning still succeeds (exit 0)" "[ $RC_MAILWARN -eq 0 ]"
+assert "FIX48: subject is escalated to SUCCESS (with warnings)" \
+  "grep -q '^Subject: \[borgsnap_ng\] SUCCESS (with warnings):' '$MOCK_MAIL_LOG'"
+assert "FIX48: priority is elevated (High) but not maximum (not the FAILURE level)" \
+  "grep -q '^X-Priority: 2 (High)' '$MOCK_MAIL_LOG' && ! grep -q '^X-Priority: 1' '$MOCK_MAIL_LOG'"
+assert "FIX48: the warning is summarized before the full log, not just buried in it" \
+  "grep -q 'warning(s) detected' '$MOCK_MAIL_LOG'"
+assert "FIX48: the actual warning text is included in the summary" \
+  "grep -q 'is readable or writable by group/others' '$MOCK_MAIL_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

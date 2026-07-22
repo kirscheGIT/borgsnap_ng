@@ -4,7 +4,8 @@ borgsnap-rsync.conf
 borgsnap.conf
 server_store.key
 client_images.key
-server*.conf
+*.conf
+!sample.conf
 *.key
 UNSORTED_INFO.md
 /scratch/
