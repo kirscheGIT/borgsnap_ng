@@ -32,7 +32,7 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
     mountZFSSnapshot() {
         mountZFS_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="mountZFSSnapshot"
-	    msg " ---- mount snap start IFS = $IFS ------------------"
+	    msg "DEBUG" " ---- mount snap start IFS = $IFS ------------------"
         mountZFS_OLD_IFS="$IFS"
         IFS=' '
         mountZFS_snapmountbasedir="$1"
@@ -92,7 +92,7 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
 	    LASTFUNC="$mountZFS_CALLINGFUCNTION"
         unset mountZFS_CALLINGFUCNTION
         IFS="$mountZFS_OLD_IFS"
-        msg " ---- mount snap end IFS = $IFS ------------------"
+        msg "DEBUG" " ---- mount snap end IFS = $IFS ------------------"
         unset mountZFS_OLD_IFS
         unset mountZFS_snapmountbasedir
         unset mountZFS_dataset
