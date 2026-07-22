@@ -1,0 +1,24 @@
+[Unit]
+Description=borgsnap_ng backup run (%i)
+# Only relevant if any of your zfssend targets or borg repos are
+# network-reachable (SSH remote targets, network shares). Harmless to
+# keep even for purely local/removable-media setups.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust the install path below to wherever you deployed borgsnap_ng.
+# mail_wrapper.sh sends its own success/failure email (see MAILTO in the
+# config file) and forwards borgsnap_ng.sh's real exit code, so systemd's
+# own success/failure tracking (systemctl status, journalctl) stays
+# accurate too - no separate OnFailure= notification unit is needed.
+ExecStart=/usr/local/bin/borgsnap_ng/mail_wrapper.sh /usr/local/bin/borgsnap_ng/%i.conf
+
+# No systemd sandboxing (ProtectSystem=, PrivateDevices=, etc.) is applied
+# here by default: this service needs broad access (root, zpool
+# import/export for removable media, mounting/unmounting ZFS datasets,
+# writing to borg repos wherever they live) that most sandboxing
+# directives would restrict. Add your own once you know your specific
+# setup's constraints - what's safe to lock down depends heavily on where
+# your repos and zfssend targets actually are.

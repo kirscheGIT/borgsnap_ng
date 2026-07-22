@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.7
+# TESTKIT_VERSION=2026-07-20.9
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -29,7 +29,7 @@ BACKUP_DIR="$WORKDIR/path-backup"
 mkdir -p "$BACKUP_DIR"
 
 cleanup_mocks() {
-  for b in zfs borg mount umount sudo date; do
+  for b in zfs zpool borg mount umount sudo date sendmail; do
     if [ -e "$BACKUP_DIR/$b" ] || [ -L "$BACKUP_DIR/$b" ]; then
       mv "$BACKUP_DIR/$b" "/usr/local/bin/$b"
     else
@@ -39,7 +39,7 @@ cleanup_mocks() {
 }
 trap cleanup_mocks EXIT INT TERM HUP
 
-for b in zfs borg mount umount sudo date; do
+for b in zfs zpool borg mount umount sudo date sendmail; do
   if [ -e "/usr/local/bin/$b" ] || [ -L "/usr/local/bin/$b" ]; then
     mv "/usr/local/bin/$b" "$BACKUP_DIR/$b"
   fi
@@ -385,6 +385,165 @@ assert "FIX45: target-side prune keeps the newest snapshot (daily-20260710)" \
   "! grep -q 'zfs destroy -r tank/prunetarget/tank/data@daily-20260710' '$MOCK_LOG'"
 assert "FIX45: target-side prune destroys the oldest (daily-20260701)" \
   "grep -q 'zfs destroy -r tank/prunetarget/tank/data@daily-20260701' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "Pool lifecycle for removable targets (FIX #46)"
+echo "-------------------------------------"
+
+WORKDIR4="$(mktemp -d)"
+cat > "$WORKDIR4/test4-zfssend.conf" << EOF4
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="zfssend:usbpool/backups, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF4
+
+export MOCK_LOG="$WORKDIR4/mock.log"
+export MOCK_STATE="$WORKDIR4/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR4/lock"
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZPOOL_NOT_IMPORTED="usbpool" sh ./borgsnap_ng.sh run "$WORKDIR4/test4-zfssend.conf" > "$WORKDIR4/run_pool_import.log" 2>&1
+RC_POOLIMPORT=$?
+assert "FIX46: run succeeds when the target pool needs importing first" "[ $RC_POOLIMPORT -eq 0 ]"
+assert "FIX46: zpool import was attempted" "grep -q 'zpool import usbpool' '$MOCK_LOG'"
+assert "FIX46: zpool export happened afterward (we imported it ourselves)" "grep -q 'zpool export usbpool' '$MOCK_LOG'"
+assert "FIX46: the actual backup still happened" "grep -q 'zfs receive -s usbpool/backups/tank/data' '$MOCK_LOG'"
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZPOOL_NOT_IMPORTED="usbpool" MOCK_ZPOOL_FAIL_IMPORT=1 sh ./borgsnap_ng.sh run "$WORKDIR4/test4-zfssend.conf" > "$WORKDIR4/run_pool_notattached.log" 2>&1
+RC_POOLNOTATTACHED=$?
+assert "FIX46: run still succeeds overall when the target pool can't be imported (not attached)" "[ $RC_POOLNOTATTACHED -eq 0 ]"
+assert "FIX46: a clear warning about the unavailable pool is shown" \
+  "grep -q 'could not be imported' '$WORKDIR4/run_pool_notattached.log'"
+assert "FIX46: no send/receive was attempted for the unavailable target" \
+  "! grep -q 'zfs receive -s usbpool' '$MOCK_LOG'"
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR4/test4-zfssend.conf" > "$WORKDIR4/run_pool_alreadyimported.log" 2>&1
+RC_POOLALREADY=$?
+assert "FIX46: run succeeds when the target pool was already imported" "[ $RC_POOLALREADY -eq 0 ]"
+assert "FIX46: no zpool import was attempted (it was already there)" "! grep -q 'zpool import' '$MOCK_LOG'"
+assert "FIX46: no zpool export happened (we didn't import it, so we leave it alone)" \
+  "! grep -q 'zpool export' '$MOCK_LOG'"
+
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZPOOL_NOT_IMPORTED="usbpool" MOCK_ZPOOL_FAIL_EXPORT=1 sh ./borgsnap_ng.sh run "$WORKDIR4/test4-zfssend.conf" > "$WORKDIR4/run_pool_exportfail.log" 2>&1
+RC_POOLEXPORTFAIL=$?
+assert "FIX46: run still succeeds when the pool export fails afterward" "[ $RC_POOLEXPORTFAIL -eq 0 ]"
+assert "FIX46: a clear warning about the failed export is shown" \
+  "grep -q 'could not be exported afterward' '$WORKDIR4/run_pool_exportfail.log'"
+
+WORKDIR5="$(mktemp -d)"
+mkdir -p "$WORKDIR5/repo1"
+cat > "$WORKDIR5/test5-mixed.conf" << EOF5
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borg:$WORKDIR5/repo1, ; zfssend:usbpool/backups, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF5
+
+export MOCK_LOG="$WORKDIR5/mock.log"
+export MOCK_STATE="$WORKDIR5/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR5/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZPOOL_NOT_IMPORTED="usbpool" MOCK_ZPOOL_FAIL_IMPORT=1 sh ./borgsnap_ng.sh run "$WORKDIR5/test5-mixed.conf" > "$WORKDIR5/run_mixed.log" 2>&1
+RC_MIXED=$?
+assert "FIX46: mixed repolist (borg + unavailable zfssend) still succeeds overall" "[ $RC_MIXED -eq 0 ]"
+assert "FIX46: the borg repo still got its backup despite the zfssend target being unavailable" \
+  "grep -q \"borg create.*$WORKDIR5/repo1\" '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "Mail notification wrapper (FIX #47)"
+echo "-------------------------------------"
+
+WORKDIR6="$(mktemp -d)"
+mkdir -p "$WORKDIR6/repo1"
+cat > "$WORKDIR6/test6-mail.conf" << EOF6
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR6/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MAILTO="admin@example.com"
+EOF6
+
+export MOCK_LOG="$WORKDIR6/mock.log"
+export MOCK_STATE="$WORKDIR6/mock.state"
+export MOCK_MAIL_LOG="$WORKDIR6/mail.log"
+export BORGSNAP_LOCKDIR="$WORKDIR6/lock"
+
+# Scenario A: successful run -> SUCCESS subject, no priority headers, the
+# wrapper's own exit code matches the (successful) backup.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"; : > "$MOCK_MAIL_LOG"
+sh ./mail_wrapper.sh "$WORKDIR6/test6-mail.conf" > "$WORKDIR6/wrap_success.log" 2>&1
+RC_MAILSUCCESS=$?
+assert "FIX47: mail wrapper forwards a successful run's exit code (0)" "[ $RC_MAILSUCCESS -eq 0 ]"
+assert "FIX47: success email has the correct subject" \
+  "grep -q '^Subject: \[borgsnap_ng\] SUCCESS:' '$MOCK_MAIL_LOG'"
+assert "FIX47: success email has NO high-priority headers" \
+  "! grep -q 'X-Priority' '$MOCK_MAIL_LOG'"
+assert "FIX47: success email is addressed to MAILTO from the config" \
+  "grep -q '^To: admin@example.com' '$MOCK_MAIL_LOG'"
+
+# Scenario B: failing run - FAILURE subject, high-priority headers, and the
+# wrapper's exit code must be the REAL (nonzero) backup exit code, not
+# swallowed by the mail-sending step that runs after it.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"; : > "$MOCK_MAIL_LOG"
+MOCK_ZFS_FAIL_LIST=1 sh ./mail_wrapper.sh "$WORKDIR6/test6-mail.conf" > "$WORKDIR6/wrap_failure.log" 2>&1
+RC_MAILFAILURE=$?
+assert "FIX47: mail wrapper forwards a failing run's real (nonzero) exit code" "[ $RC_MAILFAILURE -ne 0 ]"
+assert "FIX47: failure email has the correct subject" \
+  "grep -q '^Subject: \[borgsnap_ng\] FAILURE:' '$MOCK_MAIL_LOG'"
+assert "FIX47: failure email has high-priority headers" \
+  "grep -q '^X-Priority: 1' '$MOCK_MAIL_LOG' && grep -q '^Importance: High' '$MOCK_MAIL_LOG'"
+assert "FIX47: failure email states the same exit code the wrapper itself returned" \
+  "grep -q \"Exit code:       $RC_MAILFAILURE\" '$MOCK_MAIL_LOG'"
+
+# Scenario C: no MAILTO configured - the backup still runs normally, no
+# email is attempted at all (not even an empty/broken one).
+cat > "$WORKDIR6/test6-nomail.conf" << EOF7
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$KEYFILE"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR6/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF7
+: > "$MOCK_LOG"; : > "$MOCK_STATE"; : > "$MOCK_MAIL_LOG"
+sh ./mail_wrapper.sh "$WORKDIR6/test6-nomail.conf" > "$WORKDIR6/wrap_nomail.log" 2>&1
+RC_NOMAIL=$?
+assert "FIX47: without MAILTO, the run still succeeds normally" "[ $RC_NOMAIL -eq 0 ]"
+assert "FIX47: without MAILTO, no email is sent" "[ ! -s '$MOCK_MAIL_LOG' ]"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

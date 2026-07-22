@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily timer for borgsnap_ng backup (%i)
+
+[Timer]
+# Adjust to taste. This example runs once a day at 02:00.
+OnCalendar=*-*-* 02:00:00
+# Spreads the actual start time over a 15-minute window - useful if you
+# enable this timer for several configs at once, so they don't all hit
+# disk/network I/O at exactly the same second.
+RandomizedDelaySec=15min
+# If the machine was off/asleep at the scheduled time, run it as soon as
+# possible afterward instead of skipping that day entirely.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

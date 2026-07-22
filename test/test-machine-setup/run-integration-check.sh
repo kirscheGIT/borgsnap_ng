@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.7
+# TESTKIT_VERSION=2026-07-20.9
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.7
+# TESTKIT_VERSION=2026-07-20.9
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.7"
+TESTKIT_VERSION="2026-07-20.9"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -66,9 +66,11 @@ preflight_check_version() {
 preflight_check_version "$REPO_ROOT/test/run_mock_test.sh" "test/run_mock_test.sh"
 preflight_check_version "$REPO_ROOT/test/mocks/date" "test/mocks/date"
 preflight_check_version "$REPO_ROOT/test/mocks/zfs" "test/mocks/zfs"
+preflight_check_version "$REPO_ROOT/test/mocks/zpool" "test/mocks/zpool"
 preflight_check_version "$REPO_ROOT/test/mocks/borg" "test/mocks/borg"
+preflight_check_version "$REPO_ROOT/test/mocks/sendmail" "test/mocks/sendmail"
 
-for mockbin in date zfs borg; do
+for mockbin in date zfs zpool borg sendmail; do
   if [ ! -x "$REPO_ROOT/test/mocks/$mockbin" ]; then
     echo "PREFLIGHT: test/mocks/$mockbin exists but is not executable (chmod +x test/mocks/$mockbin)" >&2
     preflight_fail=1
@@ -102,6 +104,21 @@ preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #43"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #44"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #45"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #46"
+if [ ! -f "$REPO_ROOT/test/mocks/zpool" ]; then
+  echo "PREFLIGHT: test/mocks/zpool not found - this is a new file introduced by FIX #46, not just an update to an existing one" >&2
+  preflight_fail=1
+fi
+if [ ! -f "$REPO_ROOT/mail_wrapper.sh" ]; then
+  echo "PREFLIGHT: mail_wrapper.sh not found - this is a new file introduced by FIX #47, not just an update to an existing one" >&2
+  preflight_fail=1
+else
+  preflight_check_marker "mail_wrapper.sh" "FIX #47"
+fi
+if [ ! -f "$REPO_ROOT/test/mocks/sendmail" ]; then
+  echo "PREFLIGHT: test/mocks/sendmail not found - this is a new file introduced by FIX #47, not just an update to an existing one" >&2
+  preflight_fail=1
+fi
 preflight_check_marker "cfg_file_hdlr.sh" "FIX #40"
 preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #35"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #36"
@@ -141,6 +158,7 @@ MOCK_RESULT="skipped"
 REAL_RESULT="skipped"
 REAL_ZFSSEND_RESULT="skipped"
 REAL_RESUME_RESULT="skipped"
+REAL_POOL_RESULT="skipped"
 REAL_TESTDIR="/home/__USER__/borgsnap-integration-test"  # __USER__ resolved below
 
 # =========================================================================
@@ -491,6 +509,116 @@ CONF
               "
             fi
           fi
+
+          # FIX #46: real pool-lifecycle test. Uses a loop-device-backed
+          # pool rather than a plain backing file - loop devices under
+          # /dev are part of zpool's normal import search path, matching
+          # how a real USB drive (/dev/sdX) would be found by a bare
+          # `zpool import poolname` with no -d flag (which is what the
+          # code actually calls).
+          if [ "$REAL_RESUME_RESULT" = "PASS" ]; then
+            echo ""
+            echo "==> Testing real pool lifecycle for removable targets (FIX #46)..."
+            set +e
+            limactl shell zfs-dev sudo sh -c "
+              set -e
+              echo 'STEP: cleaning up any stale state from a previous attempt'
+              zpool export usbpool 2>/dev/null || true
+              LOOPDEV_OLD=\$(losetup -j /root/usbpool.img 2>/dev/null | cut -d: -f1)
+              [ -n \"\$LOOPDEV_OLD\" ] && losetup -d \"\$LOOPDEV_OLD\" 2>/dev/null || true
+              rm -f /root/usbpool.img
+
+              echo 'STEP: creating a loop-device-backed pool (simulates a USB drive)'
+              truncate -s 150M /root/usbpool.img
+              LOOPDEV=\$(losetup -f)
+              losetup \"\$LOOPDEV\" /root/usbpool.img
+              zpool create usbpool \"\$LOOPDEV\"
+              echo 'STEP: exporting it (simulates the drive not being attached yet)'
+              zpool export usbpool
+            "
+            REAL_POOL_SETUP_RC=$?
+            set -e
+            if [ "$REAL_POOL_SETUP_RC" -eq 0 ]; then
+              echo ""
+              echo "==> Running borgsnap_ng.sh - it should import the pool, back up, then export it again..."
+              limactl shell zfs-dev sudo sh -c "
+                cd '$REPO_IN_VM'
+                cat > '$REAL_TESTDIR/test-zfspool.conf' << CONF
+LOCAL_BORG_USER=\"root\"
+FS=\"testpool/data,\"
+COMPRESS=\"zstd,9\"
+CACHEMODE=\"mtime,size\"
+PASS=\"$REAL_TESTDIR/test.key\"
+BASEDIR=\"\"
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST=\"zfssend:usbpool/backups, \"
+REPOSKIP=\"NONE\"
+RETENTIONPERIOD=\"monthly,1;weekly,4;daily,7\"
+PRE_SCRIPT=
+POST_SCRIPT=
+CONF
+                sh borgsnap_ng.sh run '$REAL_TESTDIR/test-zfspool.conf'
+              "
+              set +e
+              REAL_POOL_RC=$?
+              set -e
+              if [ "$REAL_POOL_RC" -eq 0 ]; then
+                set +e
+                limactl shell zfs-dev sudo sh -c "
+                  echo '--- is usbpool imported right now? (should be NO - we imported it ourselves, so we exported it again afterward) ---'
+                  if zpool list usbpool >/dev/null 2>&1; then
+                    echo 'ERROR: usbpool is still imported - it should have been exported after the backup' >&2
+                    exit 1
+                  fi
+                  echo 'usbpool correctly not imported (safe to detach)'
+                  echo 'STEP: re-importing briefly to verify the backup actually landed'
+                  zpool import usbpool
+                  zfs list -r usbpool/backups 2>&1
+                  zpool export usbpool
+                "
+                REAL_POOL_VERIFY_RC=$?
+                set -e
+              else
+                REAL_POOL_VERIFY_RC=1
+              fi
+
+              if [ "$REAL_POOL_RC" -eq 0 ] && [ "$REAL_POOL_VERIFY_RC" -eq 0 ]; then
+                echo ""
+                echo "==> Testing the drive-not-attached case (loop device fully detached)..."
+                set +e
+                limactl shell zfs-dev sudo sh -c "
+                  LOOPDEV=\$(losetup -j /root/usbpool.img 2>/dev/null | cut -d: -f1)
+                  [ -n \"\$LOOPDEV\" ] && losetup -d \"\$LOOPDEV\"
+                  echo 'loop device detached - usbpool is now genuinely unreachable, like an unplugged USB drive'
+                "
+                set -e
+                limactl shell zfs-dev sudo sh -c "
+                  cd '$REPO_IN_VM'
+                  sh borgsnap_ng.sh run '$REAL_TESTDIR/test-zfspool.conf'
+                "
+                set +e
+                REAL_POOL_NOTATTACHED_RC=$?
+                set -e
+                if [ "$REAL_POOL_NOTATTACHED_RC" -eq 0 ]; then
+                  REAL_POOL_RESULT="PASS"
+                else
+                  REAL_POOL_RESULT="FAIL (run should still succeed when the pool truly can't be found, got exit $REAL_POOL_NOTATTACHED_RC)"
+                fi
+              else
+                REAL_POOL_RESULT="FAIL (import/backup/export cycle did not complete correctly)"
+              fi
+            else
+              REAL_POOL_RESULT="FAIL (could not set up the loop-device-backed pool)"
+            fi
+            if [ "$KEEP" -eq 0 ]; then
+              limactl shell zfs-dev sudo sh -c "
+                zfs destroy 'testpool/data#zfssend-usbpool_backups' 2>/dev/null || true
+                LOOPDEV=\$(losetup -j /root/usbpool.img 2>/dev/null | cut -d: -f1)
+                [ -n \"\$LOOPDEV\" ] && losetup -d \"\$LOOPDEV\" 2>/dev/null || true
+                rm -f /root/usbpool.img
+              "
+            fi
+          fi
         fi
       else
         REAL_RESULT="FAIL (exit $REAL_RC)"
@@ -521,8 +649,9 @@ printf '%-45s %s\n' "1. Mock harness (docker-dev)"  "$MOCK_RESULT"
 printf '%-45s %s\n' "2. Real ZFS run (zfs-dev)"      "$REAL_RESULT"
 printf '%-45s %s\n' "3. Real zfssend backend (zfs-dev)" "$REAL_ZFSSEND_RESULT"
 printf '%-45s %s\n' "4. Real resumable receive (zfs-dev)" "$REAL_RESUME_RESULT"
+printf '%-45s %s\n' "5. Real pool lifecycle (zfs-dev)" "$REAL_POOL_RESULT"
 
-case "$MOCK_RESULT$REAL_RESULT$REAL_ZFSSEND_RESULT$REAL_RESUME_RESULT" in
+case "$MOCK_RESULT$REAL_RESULT$REAL_ZFSSEND_RESULT$REAL_RESUME_RESULT$REAL_POOL_RESULT" in
   *FAIL*) exit 1 ;;
   *) exit 0 ;;
 esac

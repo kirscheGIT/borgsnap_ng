@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.7
+# TESTKIT_VERSION=2026-07-20.9
 # Mock date for borgsnap_ng tests.
 #
 # bckp_hdlr.sh calls `date +"%Y%m%d"`, `date +"%w"`, and `date +"%d"` to pick
@@ -21,6 +21,7 @@ case "$1" in
   +%Y%m%d) echo "20260715" ;;
   +%w)     echo "3" ;;
   +%d)     echo "15" ;;
+  "+%Y-%m-%d %H:%M:%S") echo "2026-07-15 12:00:00" ;;
   *)
     # Any other format this test doesn't know about yet: fail loudly rather
     # than silently falling through to the real wall-clock date, which is

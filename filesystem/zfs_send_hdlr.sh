@@ -26,10 +26,17 @@
 #            target-side retention by reusing pruneZFSSnapshot as-is
 #            against the target dataset instead of the source - it's fully
 #            generic and needed no target-specific variant.
+#   FIX #46 (step 6): removable-media pool lifecycle. If the target's pool
+#            isn't currently imported, import it before doing anything
+#            else; if import fails (drive not attached), skip this backend
+#            call gracefully - same carve-out spirit as createBorg (FIX
+#            #36), one unavailable destination doesn't abort the whole
+#            run. Export the pool again afterward, but ONLY if we were the
+#            one who imported it - a permanently-attached pool is left
+#            exactly as found.
 #
 # Not yet implemented (deliberately, each is its own later, separately
-# tested increment): removable-media pool import/export, raw send for
-# encrypted sources, remote (SSH) targets.
+# tested increment): raw send for encrypted sources, remote (SSH) targets.
 # shellcheck disable=SC3043
 if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
     export ZFS_SEND_HDLR_SOURCED=1
@@ -75,6 +82,9 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         bckndZfsSend_keepduration="$5"
 
         bckndZfsSend_targetdataset="$bckndZfsSend_target/$bckndZfsSend_dataset"
+        # FIX #46: the pool name is the target's first path component -
+        # needed to check/attempt import before touching anything on it.
+        bckndZfsSend_pool="${bckndZfsSend_target%%/*}"
         # FIX #43: a bookmark name is scoped per-target (via this slug), so
         # the same source dataset can be sent to more than one zfssend
         # target, each tracked independently.
@@ -84,7 +94,38 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         bckndZfsSend_bookmark="$bckndZfsSend_dataset#zfssend-$bckndZfsSend_targetslug"
         unset bckndZfsSend_targetslug
 
-        msg "DEBUG" "backendZfsSend: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset (remote cmd: ${bckndZfsSend_remotecmd:-none}, keep $bckndZfsSend_keepduration, bookmark $bckndZfsSend_bookmark)"
+        msg "DEBUG" "backendZfsSend: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset (remote cmd: ${bckndZfsSend_remotecmd:-none}, keep $bckndZfsSend_keepduration, bookmark $bckndZfsSend_bookmark, pool $bckndZfsSend_pool)"
+
+        # FIX #46: pool lifecycle for removable-media targets. If the
+        # target's pool isn't currently imported, try to import it. A
+        # failed import (e.g. the removable drive simply isn't attached
+        # right now) is an EXPECTED, common state for this kind of target -
+        # not a fatal error. Skip this backend call gracefully (matching
+        # the createBorg carve-out from FIX #36 - one destination being
+        # unavailable shouldn't abort the whole run, including the other
+        # configured repos) rather than aborting the whole process via
+        # die/err_hdlr.
+        bckndZfsSend_pool_imported_by_us=0
+        if ! zpool list -H "$bckndZfsSend_pool" >/dev/null 2>&1; then
+            msg "INFO" "zfssend: pool '$bckndZfsSend_pool' is not currently imported - attempting import"
+            if zpool import "$bckndZfsSend_pool" >/dev/null 2>&1; then
+                bckndZfsSend_pool_imported_by_us=1
+            else
+                msg "WARNING" "zfssend: pool '$bckndZfsSend_pool' could not be imported (not attached?) - skipping this backup target for now"
+                LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
+                unset bckndZfsSend_CALLINGFUCNTION
+                unset bckndZfsSend_pool
+                unset bckndZfsSend_pool_imported_by_us
+                unset bckndZfsSend_dataset
+                unset bckndZfsSend_label
+                unset bckndZfsSend_keepduration
+                unset bckndZfsSend_remotecmd
+                unset bckndZfsSend_targetdataset
+                unset bckndZfsSend_targetparent
+                unset bckndZfsSend_bookmark
+                return 0
+            fi
+        fi
 
         # Ensure the parent dataset hierarchy exists on the target. zfs
         # receive creates exactly the leaf dataset it's given - it doesn't
@@ -126,6 +167,8 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
                 unset bckndZfsSend_remotecmd
                 unset bckndZfsSend_keepduration
                 unset bckndZfsSend_resumetoken
+                unset bckndZfsSend_pool
+                unset bckndZfsSend_pool_imported_by_us
                 die "zfssend: target dataset '$bckndZfsSend_targetdataset' already exists but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
             fi
             bckndZfsSend_mode="incremental"
@@ -191,6 +234,8 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_mode
             unset bckndZfsSend_keepduration
             unset bckndZfsSend_recvrc
+            unset bckndZfsSend_pool
+            unset bckndZfsSend_pool_imported_by_us
             err_hdlr "$bckndZfsSend_sendrc"
         fi
         if [ "$bckndZfsSend_recvrc" -ne 0 ]; then
@@ -200,6 +245,8 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_bookmark
             unset bckndZfsSend_mode
             unset bckndZfsSend_keepduration
+            unset bckndZfsSend_pool
+            unset bckndZfsSend_pool_imported_by_us
             err_hdlr "$bckndZfsSend_recvrc"
         fi
 
@@ -218,6 +265,8 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
                 unset bckndZfsSend_mode
                 unset bckndZfsSend_sendrc
                 unset bckndZfsSend_recvrc
+                unset bckndZfsSend_pool
+                unset bckndZfsSend_pool_imported_by_us
                 die "zfssend: resume of $bckndZfsSend_targetdataset reported success, but no snapshot could be found on the target afterward - refusing to guess which label to bookmark."
             fi
             bckndZfsSend_label="$bckndZfsSend_landedlabel"
@@ -254,6 +303,20 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # accumulate every sent snapshot forever.
         pruneZFSSnapshot "$bckndZfsSend_targetdataset" "$bckndZfsSend_label" "$bckndZfsSend_keepduration" ""
 
+        # FIX #46: export the pool again if WE were the one who imported
+        # it - leave an already-attached (permanent) pool alone. A failed
+        # export doesn't abort the run (the backup itself already
+        # succeeded) - it just means the drive isn't safe to detach yet,
+        # which is worth a clear warning but not worth losing the rest of
+        # this run's other repos over.
+        if [ "$bckndZfsSend_pool_imported_by_us" = 1 ]; then
+            if zpool export "$bckndZfsSend_pool" >/dev/null 2>&1; then
+                msg "INFO" "zfssend: exported pool '$bckndZfsSend_pool' - safe to detach"
+            else
+                msg "WARNING" "zfssend: backup succeeded, but pool '$bckndZfsSend_pool' could not be exported afterward - do not detach it yet (check for busy/held datasets)"
+            fi
+        fi
+
         LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
         unset bckndZfsSend_CALLINGFUCNTION
         unset bckndZfsSend_dataset
@@ -263,6 +326,8 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         unset bckndZfsSend_keepduration
         unset bckndZfsSend_sendrc
         unset bckndZfsSend_recvrc
+        unset bckndZfsSend_pool
+        unset bckndZfsSend_pool_imported_by_us
         return 0
     }
 fi

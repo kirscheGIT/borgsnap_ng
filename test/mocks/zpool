@@ -1,0 +1,65 @@
+#!/bin/sh
+# TESTKIT_VERSION=2026-07-20.9
+# Mock zpool for borgsnap_ng tests (FIX #46: removable-media pool
+# lifecycle). Logs every invocation to $MOCK_LOG.
+# Supported: list <pool>, import <pool>, export <pool>
+#
+# Default behavior: every pool is considered already imported, unless its
+# name is listed (space-separated) in MOCK_ZPOOL_NOT_IMPORTED - this
+# matches every existing test's implicit assumption (their "tank" pool is
+# just always there) without needing any of them to opt in explicitly.
+#
+# Fault injection (unset/empty = normal behavior):
+#   MOCK_ZPOOL_NOT_IMPORTED="pool1 pool2"  these pools report as NOT
+#                            currently imported (simulates a removable
+#                            device that isn't attached, or simply hasn't
+#                            been imported yet this session).
+#   MOCK_ZPOOL_FAIL_IMPORT=1  "zpool import" always fails, simulating a
+#                            device that's genuinely not attached (import
+#                            has nothing to find).
+#   MOCK_ZPOOL_FAIL_EXPORT=1  "zpool export" always fails, simulating a
+#                            pool that's still busy (e.g. a dataset held
+#                            open) and can't be safely detached yet.
+: "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
+echo "zpool $*" >> "$MOCK_LOG"
+
+is_not_imported() {
+  # $1 = pool name; checks membership in the space-separated
+  # MOCK_ZPOOL_NOT_IMPORTED list
+  for p in ${MOCK_ZPOOL_NOT_IMPORTED:-}; do
+    [ "$p" = "$1" ] && return 0
+  done
+  return 1
+}
+
+cmd="$1"; shift
+case "$cmd" in
+  list)
+    pool=""
+    for a in "$@"; do
+      case "$a" in
+        -*) ;;
+        *) pool="$a" ;;
+      esac
+    done
+    if [ -n "$pool" ] && is_not_imported "$pool"; then
+      echo "cannot open '$pool': no such pool" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  import)
+    pool="$1"
+    if [ "${MOCK_ZPOOL_FAIL_IMPORT:-0}" = 1 ]; then
+      echo "cannot import '$pool': no such pool available" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  export)
+    pool="$1"
+    if [ "${MOCK_ZPOOL_FAIL_EXPORT:-0}" = 1 ]; then
+      echo "cannot export '$pool': pool is busy" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  *) exit 0 ;;
+esac
