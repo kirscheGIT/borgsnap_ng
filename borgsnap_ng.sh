@@ -73,6 +73,39 @@
 
 set -u
 
+# FIX #49: cd to this script's own directory before any of the relative
+# ". ./..." sourcing lines further down - otherwise this script only
+# works when invoked with CWD already set to its own directory. Every one
+# of this project's own tests always did that (masking the bug for a long
+# time), but it breaks the moment something calls it via an absolute path
+# from elsewhere - a real cron/systemd invocation, or mail_wrapper.sh.
+#
+# The config-file argument ($2, for the run/snap/tidy subcommands) is
+# resolved to an absolute path FIRST, before the cd below - otherwise a
+# relative config path would incorrectly resolve against this script's
+# own directory instead of the CALLER's original working directory. If
+# it can't be resolved (e.g. a typo'd path that doesn't exist), it's left
+# alone - readconfigfile's own "[ -r ... ]" check further down already
+# produces a clear error for that case, no need to duplicate it here.
+if [ "$#" -ge 2 ]; then
+    case "$2" in
+        /*) : ;;
+        *)
+            if [ -e "$2" ]; then
+                bsng_resolved_arg2="$(cd -- "$(dirname -- "$2")" 2>/dev/null && pwd -P)/$(basename -- "$2")"
+                bsng_first_arg="$1"
+                shift 2
+                set -- "$bsng_first_arg" "$bsng_resolved_arg2" "$@"
+                unset bsng_first_arg
+                unset bsng_resolved_arg2
+            fi
+            ;;
+    esac
+fi
+bsng_scriptdir="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+cd -- "$bsng_scriptdir" || { echo "borgsnap_ng.sh: cannot cd to script directory: $bsng_scriptdir" >&2; exit 1; }
+unset bsng_scriptdir
+
 if [ -z "${LASTFUNC+x}" ]; then
     export LASTFUNC=""
 fi

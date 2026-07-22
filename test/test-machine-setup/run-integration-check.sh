@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.10
+# TESTKIT_VERSION=2026-07-20.12
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.10
+# TESTKIT_VERSION=2026-07-20.12
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.10"
+TESTKIT_VERSION="2026-07-20.12"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -94,6 +94,7 @@ if [ ! -f "$REPO_ROOT/filesystem/zfs_send_hdlr.sh" ]; then
 fi
 
 preflight_check_marker "borgsnap_ng.sh" "zfs_send_hdlr.sh"
+preflight_check_marker "borgsnap_ng.sh" "FIX #49"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #33"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #38"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #39"
@@ -160,6 +161,7 @@ REAL_RESULT="skipped"
 REAL_ZFSSEND_RESULT="skipped"
 REAL_RESUME_RESULT="skipped"
 REAL_POOL_RESULT="skipped"
+REAL_FIX49_RESULT="skipped"
 REAL_TESTDIR="/home/__USER__/borgsnap-integration-test"  # __USER__ resolved below
 
 # =========================================================================
@@ -250,6 +252,45 @@ if [ "$RUN_REAL" -eq 1 ]; then
         mkdir -p '$REAL_TESTDIR'
         echo 'integration-test-passphrase' > '$REAL_TESTDIR/test.key'
         chmod 600 '$REAL_TESTDIR/test.key'
+
+        # FIX #49: every other real test in this script does 'cd \$REPO_IN_VM'
+        # before invoking borgsnap_ng.sh - which would silently mask a real
+        # bug (its relative '. ./...' sourcing only worked when CWD already
+        # happened to be its own directory). This check deliberately does
+        # NOT cd there, using its own isolated dataset/config so it can't
+        # interfere with the main test's snapshot-label expectations below.
+        zfs create testpool/fix49test 2>/dev/null || true
+        cat > '$REAL_TESTDIR/fix49.conf' << CONF
+LOCAL_BORG_USER=\"root\"
+FS=\"testpool/fix49test,\"
+COMPRESS=\"zstd,9\"
+CACHEMODE=\"mtime,size\"
+PASS=\"$REAL_TESTDIR/test.key\"
+BASEDIR=\"\"
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST=\"$REAL_TESTDIR/fix49repo, \"
+REPOSKIP=\"NONE\"
+RETENTIONPERIOD=\"monthly,1;weekly,4;daily,7\"
+PRE_SCRIPT=
+POST_SCRIPT=
+CONF
+        cd /root 2>/dev/null || cd /
+        sh '$REPO_IN_VM/borgsnap_ng.sh' run '$REAL_TESTDIR/fix49.conf'
+      "
+      REAL_FIX49_RC=$?
+      set -e
+      if [ "$REAL_FIX49_RC" -eq 0 ]; then
+        REAL_FIX49_RESULT="PASS"
+      else
+        REAL_FIX49_RESULT="FAIL (exit $REAL_FIX49_RC)"
+      fi
+      if [ "$KEEP" -eq 0 ]; then
+        limactl shell zfs-dev sudo sh -c "zfs destroy -r testpool/fix49test 2>/dev/null || true"
+      fi
+      set +e
+
+      limactl shell zfs-dev sudo sh -c "
+        mkdir -p '$REAL_TESTDIR'
 
         # NOTE: LOCAL_BORG_USER is intentionally root, not the invoking Mac
         # users guest-VM name. cfg_file_hdlr.sh has a hard gate requiring
@@ -651,8 +692,9 @@ printf '%-45s %s\n' "2. Real ZFS run (zfs-dev)"      "$REAL_RESULT"
 printf '%-45s %s\n' "3. Real zfssend backend (zfs-dev)" "$REAL_ZFSSEND_RESULT"
 printf '%-45s %s\n' "4. Real resumable receive (zfs-dev)" "$REAL_RESUME_RESULT"
 printf '%-45s %s\n' "5. Real pool lifecycle (zfs-dev)" "$REAL_POOL_RESULT"
+printf '%-45s %s\n' "6. Real absolute-path invocation (zfs-dev)" "$REAL_FIX49_RESULT"
 
-case "$MOCK_RESULT$REAL_RESULT$REAL_ZFSSEND_RESULT$REAL_RESUME_RESULT$REAL_POOL_RESULT" in
+case "$MOCK_RESULT$REAL_RESULT$REAL_ZFSSEND_RESULT$REAL_RESUME_RESULT$REAL_POOL_RESULT$REAL_FIX49_RESULT" in
   *FAIL*) exit 1 ;;
   *) exit 0 ;;
 esac

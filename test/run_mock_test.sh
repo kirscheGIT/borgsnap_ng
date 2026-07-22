@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.10
+# TESTKIT_VERSION=2026-07-20.12
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -583,6 +583,57 @@ assert "FIX48: the warning is summarized before the full log, not just buried in
   "grep -q 'warning(s) detected' '$MOCK_MAIL_LOG'"
 assert "FIX48: the actual warning text is included in the summary" \
   "grep -q 'is readable or writable by group/others' '$MOCK_MAIL_LOG'"
+
+echo "-------------------------------------"
+echo "Script directory resolution (FIX #49)"
+echo "-------------------------------------"
+
+# All the tests above always `cd "$REPOROOT"` before invoking
+# borgsnap_ng.sh - which would have silently masked a real bug: the
+# script's own ". ./..." sourcing lines are relative, so it only worked
+# when CWD already happened to be the script's own directory. This
+# section deliberately runs from somewhere else entirely, via an absolute
+# path, to guard against that regressing.
+WORKDIR7="$(mktemp -d)"
+mkdir -p "$WORKDIR7/repo1"
+MAILKEYFILE7="$WORKDIR7/test7.key"; echo "testpassphrase" > "$MAILKEYFILE7"; chmod 600 "$MAILKEYFILE7"
+cat > "$WORKDIR7/test7.conf" << EOF9
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE7"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR7/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF9
+chmod 600 "$WORKDIR7/test7.conf"
+
+export MOCK_LOG="$WORKDIR7/mock.log"
+export MOCK_STATE="$WORKDIR7/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR7/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+
+WORKDIR7_ELSEWHERE="$(mktemp -d)"
+( cd "$WORKDIR7_ELSEWHERE" && sh "$REPOROOT/borgsnap_ng.sh" run "$WORKDIR7/test7.conf" > "$WORKDIR7/run_absolute.log" 2>&1 )
+RC_ABSPATH=$?
+assert "FIX49: invoked via absolute path from a directory other than the repo root, the run still succeeds" \
+  "[ $RC_ABSPATH -eq 0 ]"
+assert "FIX49: it did not fail trying to source its own dependencies" \
+  "! grep -q 'cannot open.*msg_and_err_hdlr' '$WORKDIR7/run_absolute.log'"
+
+# A relative config-file argument must resolve against the CALLER's cwd
+# (where $WORKDIR7/test7.conf's directory is), not the script's own
+# directory.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+( cd "$WORKDIR7" && sh "$REPOROOT/borgsnap_ng.sh" run "test7.conf" > "$WORKDIR7/run_relative.log" 2>&1 )
+RC_RELPATH=$?
+assert "FIX49: a relative config path resolves against the caller's cwd, not the script's own directory" \
+  "[ $RC_RELPATH -eq 0 ]"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
