@@ -6,6 +6,7 @@ server_store.key
 client_images.key
 *.conf
 !sample.conf
+!borgsnap-ng.tmpfiles.conf
 *.key
 UNSORTED_INFO.md
 /scratch/
