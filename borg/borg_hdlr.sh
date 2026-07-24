@@ -111,15 +111,13 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         if [ -d $crtBorg_srcpath ]; then
             for crtBorg_i in $crtBorg_pathlist; do
                 if [ "${crtBorg_i#ssh://}" != "$crtBorg_i" ]; then
-                    # [x] FIXME #32 source path is wrong @kirscheGIT
-                    crtBorg_cmdline="borg create $crtBorg_borgopts $crtBorg_remotepath ${crtBorg_i}::${crtBorg_backuplabel} $crtBorg_srcpath" #/tmp/borgsnap_ng/"
-                    #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey"$crtBorg_remotepath" "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
-                    #set -e
+                    # FIX #32 (resolved 2025-01-12): source path construction
+                    # for the remote (ssh://) branch was wrong at the time
+                    # this comment was originally written - already fixed
+                    # since, this note was just never cleaned up.
+                    crtBorg_cmdline="borg create $crtBorg_borgopts $crtBorg_remotepath ${crtBorg_i}::${crtBorg_backuplabel} $crtBorg_srcpath"
                 else 
-                    # [ ] TODO #33 use crtBorg_cmdline instead of the below construct @kirscheGIT
-                    #exec_cmd borg create "$crtBorg_borgopts" --encryption=repokey  "${crtBorg_i}::${crtBorg_backuplabel}" "$crtBorg_srcpath"
-                    crtBorg_cmdline="borg create $crtBorg_borgopts ${crtBorg_i}::${crtBorg_backuplabel} $crtBorg_srcpath" #/tmp/borgsnap_ng/" 
-                    #set -e
+                    crtBorg_cmdline="borg create $crtBorg_borgopts ${crtBorg_i}::${crtBorg_backuplabel} $crtBorg_srcpath"
                 fi
                 msg "DEBUG" "Borg create cmdline: $crtBorg_cmdline"
                 exec_cmd eval "$crtBorg_cmdline"

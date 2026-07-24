@@ -1,0 +1,16 @@
+# borgsnap_ng: least-privilege sudo rules for the non-root "borg" user.
+#
+# Neither of these two operation classes can be delegated via "zfs allow" on
+# Linux:
+#   - mount/umount: the OpenZFS docs are explicit that "mount, unmount,
+#     mountpoint, canmount, rename, and share... cannot be delegated [on
+#     Linux] because the Linux mount(8) command restricts modifications of
+#     the global namespace to the root user." Our code already calls the
+#     *generic* OS `mount -t zfs`/`umount` (not `zfs mount`), which needs
+#     this regardless of any zfs allow delegation.
+#   - zpool import/export: pool-level administration has no "zpool allow"
+#     delegation mechanism in ZFS at all - it's root-only by design.
+#
+# Install as /etc/sudoers.d/borgsnap-ng (mode 0440), and validate with
+# `visudo -c -f /etc/sudoers.d/borgsnap-ng` before relying on it.
+borg ALL=(root) NOPASSWD: /usr/bin/mount -t zfs *, /usr/bin/umount *, /usr/sbin/zpool import *, /usr/sbin/zpool export *

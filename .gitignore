@@ -9,3 +9,4 @@ client_images.key
 *.key
 UNSORTED_INFO.md
 /scratch/
+*.bak
