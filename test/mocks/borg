@@ -1,10 +1,15 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.14
+# TESTKIT_VERSION=2026-07-20.15
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
 #     exit 1. Used to verify FIX #36 (a failing create for one repo must be
 #     reported, but must not abort backups to the other configured repos).
+#   MOCK_BORG_LIST_RC=<code>   any "borg list" call exits with this code
+#     instead of 0. Used to simulate BorgBase's borg-native repo states
+#     (FIX #50): 15 = Repository.InvalidRepository (exists, not yet
+#     init'd), 13 = Repository.DoesNotExist, or any other real borg exit
+#     code for testing the "unexpected error" path.
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 echo "borg $*" >> "$MOCK_LOG"
 if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
@@ -15,5 +20,9 @@ if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
         exit 1 ;;
     esac
   done
+fi
+if [ "$1" = "list" ] && [ -n "${MOCK_BORG_LIST_RC:-}" ] && [ "$MOCK_BORG_LIST_RC" -ne 0 ]; then
+  echo "mock borg list: simulated exit $MOCK_BORG_LIST_RC (MOCK_BORG_LIST_RC)" >&2
+  exit "$MOCK_BORG_LIST_RC"
 fi
 exit 0

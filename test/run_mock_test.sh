@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.14
+# TESTKIT_VERSION=2026-07-20.15
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -634,6 +634,95 @@ assert "FIX49: it did not fail trying to source its own dependencies" \
 RC_RELPATH=$?
 assert "FIX49: a relative config path resolves against the caller's cwd, not the script's own directory" \
   "[ $RC_RELPATH -eq 0 ]"
+
+echo "-------------------------------------"
+echo "BorgBase repo-state detection (FIX #50)"
+echo "-------------------------------------"
+
+WORKDIR8="$(mktemp -d)"
+MAILKEYFILE8="$WORKDIR8/test8.key"; echo "testpassphrase" > "$MAILKEYFILE8"; chmod 600 "$MAILKEYFILE8"
+cat > "$WORKDIR8/test8-borgbase.conf" << EOF10
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE8"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borgbase:ssh://borgbase_repo/./repo, borg, repokey-blake2"
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF10
+chmod 600 "$WORKDIR8/test8-borgbase.conf"
+
+export MOCK_LOG="$WORKDIR8/mock.log"
+export MOCK_STATE="$WORKDIR8/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR8/lock"
+
+# Scenario A: repo exists but not yet initialized (rc 15) -> borg init runs
+# with the configured encryption mode, then create/prune proceed normally.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=15 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_needinit.log" 2>&1
+RC_NEEDINIT=$?
+assert "FIX50: rc 15 (not yet initialized) - run succeeds" "[ $RC_NEEDINIT -eq 0 ]"
+assert "FIX50: borg list was used to check repo state" "grep -q '^borg list' '$MOCK_LOG'"
+assert "FIX50: borg init ran with the configured encryption mode" \
+  "grep -q '^borg init --encryption=repokey-blake2' '$MOCK_LOG'"
+assert "FIX50: borg create still ran afterward" "grep -q '^borg create' '$MOCK_LOG'"
+assert "FIX50: no shell ls/mkdir was attempted (BorgBase can't run those at all)" \
+  "! grep -qE '^(ls|mkdir) ' '$MOCK_LOG'"
+
+# Scenario B: repo already initialized (rc 0) -> no init, straight to create.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_alreadyinit.log" 2>&1
+RC_ALREADYINIT=$?
+assert "FIX50: rc 0 (already initialized) - run succeeds" "[ $RC_ALREADYINIT -eq 0 ]"
+assert "FIX50: borg init was NOT called (already initialized)" "! grep -q '^borg init' '$MOCK_LOG'"
+assert "FIX50: borg create still ran" "grep -q '^borg create' '$MOCK_LOG'"
+
+# Scenario C: genuinely wrong path (rc 13) - BorgBase can't create one for
+# us, so this must be a clear, actionable configuration error, not a crash.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=13 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_wrongpath.log" 2>&1
+RC_WRONGPATH=$?
+assert "FIX50: rc 13 (does not exist) - run fails" "[ $RC_WRONGPATH -ne 0 ]"
+assert "FIX50: the error explains BorgBase repos need the web UI" \
+  "grep -q 'must be created via their web UI first' '$WORKDIR8/run_wrongpath.log'"
+assert "FIX50: borg init was NOT attempted for a genuinely wrong path" "! grep -q '^borg init' '$MOCK_LOG'"
+
+# Scenario D: an unexpected exit code - surfaced clearly, not silently
+# misinterpreted as either state.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=2 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_unexpected.log" 2>&1
+RC_UNEXPECTED=$?
+assert "FIX50: an unexpected borg list exit code fails the run" "[ $RC_UNEXPECTED -ne 0 ]"
+assert "FIX50: the error surfaces the unexpected exit code" "grep -q 'unexpectedly' '$WORKDIR8/run_unexpected.log'"
+
+# Default encryption: a borgbase entry with NO third REPOLIST field must
+# still default to repokey, matching every other repo type unchanged.
+cat > "$WORKDIR8/test8-borgbase-noenc.conf" << EOF11
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE8"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borgbase:ssh://borgbase_repo/./repo, borg"
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF11
+chmod 600 "$WORKDIR8/test8-borgbase-noenc.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=15 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase-noenc.conf" > "$WORKDIR8/run_noenc.log" 2>&1
+RC_NOENC=$?
+assert "FIX50: no encryption field specified - run still succeeds" "[ $RC_NOENC -eq 0 ]"
+assert "FIX50: defaults to repokey when no encryption field is given" \
+  "grep -q '^borg init --encryption=repokey ' '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

@@ -33,6 +33,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         # $2 - optional - remote borg command
         #      if multiple remote repos are used, this value
         #      is used for all of them!
+        # $3 - optional - encryption mode for "borg init --encryption=..."
+        #      (default: repokey, preserving prior hardcoded behavior)
 
         initBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="initBorg"
@@ -40,6 +42,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         IFS=' '
         initBorg_pathlist="$1"
         initBorg_borgpath="$2"
+        initBorg_encryption="${3:-repokey}"
         
         initBorg_remotepath=""
         initBorg_cmdline=""
@@ -56,13 +59,13 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             msg "DEBUG" "Init Borg path is: $i "
             if [ "${i#ssh://}" != "$i" ]; then
                 msg "DEBUG" "Initialize Remote path"
-                initBorg_cmdline="borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i""
+                initBorg_cmdline="borg init --encryption=$initBorg_encryption --show-rc "$initBorg_remotepath" "$i""
                 msg "DEBUG" "Init Borg cmdline is $initBorg_cmdline"
                 #exec_cmd borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i"
                 exec_cmd eval "$initBorg_cmdline"  
                 #set -e
             else
-                exec_cmd borg init --encryption=repokey --show-rc "$i"  
+                exec_cmd borg init --encryption="$initBorg_encryption" --show-rc "$i"  
                 #set -e
             fi
         done
@@ -74,6 +77,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset initBorg_borgpath
         unset initBorg_remotepath
         unset initBorg_pathlist
+        unset initBorg_encryption
         return 0
     }
 
@@ -236,6 +240,95 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         return 0
     }
 
+    ensureBorgBaseInit(){
+        # FIX #50: BorgBase (and any similarly locked-down "borg repo
+        # hosting" provider) forces every SSH login to run "borg serve"
+        # regardless of what command is actually sent - so direxists'/
+        # dircreate's shell commands (ls, mkdir) never reach a real shell
+        # at all; they get swallowed as bogus arguments to borg itself
+        # (visible as "borg: error: argument <command>: invalid choice").
+        # There is also no mkdir equivalent: BorgBase repos are created
+        # exactly once via their web UI, one fixed path per account - we
+        # can never create a new one, only detect whether the existing one
+        # has been borg-init'd yet.
+        #
+        # borg list's own exit code (stable, documented at
+        # https://borgbackup.readthedocs.io/en/stable/internals/frontends.html#message-ids)
+        # tells us exactly that, without needing any shell access at all:
+        #   0  - already a valid, initialized repo - nothing to do
+        #   15 - Repository.InvalidRepository: the path exists (BorgBase
+        #        created the slot) but isn't borg-init'd yet - this is the
+        #        normal state of a freshly-created BorgBase repo
+        #   13 - Repository.DoesNotExist: genuinely the wrong path - since
+        #        we can't create one, this is a real configuration error
+        #   anything else - a real, unexpected error
+        #
+        # Note: rc 15 for *remote* repos specifically requires a client
+        # (not server) borg version >= 1.4.1 - see
+        # https://github.com/borgbackup/borg/issues/8631. Older clients
+        # get a generic rc 2 instead, which this function will (correctly)
+        # treat as "unexpected error" rather than silently misinterpreting
+        # it as "needs init".
+        #
+        # $1 - mandatory repo path (ssh://...)
+        # $2 - optional borg remote command
+        # $3 - optional encryption mode for a fresh init (default: repokey)
+        ensureBorgBaseInit_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="ensureBorgBaseInit"
+        ensureBorgBaseInit_repo="$1"
+        ensureBorgBaseInit_remotecmd="$2"
+        ensureBorgBaseInit_encryption="${3:-repokey}"
+
+        if [ -n "$ensureBorgBaseInit_remotecmd" ]; then
+            ensureBorgBaseInit_remotepath="--remote-path=${ensureBorgBaseInit_remotecmd}"
+        else
+            ensureBorgBaseInit_remotepath="--remote-path=borg"
+        fi
+
+        ensureBorgBaseInit_listcmd="borg list $ensureBorgBaseInit_remotepath \"$ensureBorgBaseInit_repo\""
+        msg "DEBUG" "borgbase repo state check: $ensureBorgBaseInit_listcmd"
+        eval "$ensureBorgBaseInit_listcmd"
+        ensureBorgBaseInit_listrc=$?
+        msg "DEBUG" "borgbase repo state check exit code: $ensureBorgBaseInit_listrc"
+
+        case "$ensureBorgBaseInit_listrc" in
+            0)
+                msg "DEBUG" "borgbase repo '$ensureBorgBaseInit_repo' already initialized"
+                ;;
+            15)
+                msg "INFO" "borgbase repo '$ensureBorgBaseInit_repo' exists but is not yet initialized - running borg init"
+                initBorg "$ensureBorgBaseInit_repo" "$ensureBorgBaseInit_remotecmd" "$ensureBorgBaseInit_encryption"
+                ;;
+            13)
+                unset ensureBorgBaseInit_CALLINGFUCNTION
+                unset ensureBorgBaseInit_remotecmd
+                unset ensureBorgBaseInit_encryption
+                unset ensureBorgBaseInit_remotepath
+                unset ensureBorgBaseInit_listcmd
+                unset ensureBorgBaseInit_listrc
+                die "borgbase repo '$ensureBorgBaseInit_repo' does not exist. BorgBase repos must be created via their web UI first - filesystem operations (mkdir etc.) aren't possible over their restricted SSH access, so this can't be created automatically. Check the path and that the repo exists in your BorgBase dashboard."
+                ;;
+            *)
+                unset ensureBorgBaseInit_CALLINGFUCNTION
+                unset ensureBorgBaseInit_remotecmd
+                unset ensureBorgBaseInit_encryption
+                unset ensureBorgBaseInit_remotepath
+                unset ensureBorgBaseInit_listcmd
+                die "borgbase repo check failed unexpectedly (borg list exit $ensureBorgBaseInit_listrc) for '$ensureBorgBaseInit_repo' - see the borg output above for details. If this is rc 2, double check your client's borg version supports modern remote exit codes (>= 1.4.1, see FIX #50's comments)."
+                ;;
+        esac
+
+        LASTFUNC="$ensureBorgBaseInit_CALLINGFUCNTION"
+        unset ensureBorgBaseInit_CALLINGFUCNTION
+        unset ensureBorgBaseInit_repo
+        unset ensureBorgBaseInit_remotecmd
+        unset ensureBorgBaseInit_encryption
+        unset ensureBorgBaseInit_remotepath
+        unset ensureBorgBaseInit_listcmd
+        unset ensureBorgBaseInit_listrc
+        return 0
+    }
+
     backendBorg(){
         # FIX #41: backend wrapper called from startBackupMachine's repo
         # dispatch (see backup/bckp_hdlr.sh). Bundles the existing
@@ -249,6 +342,12 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         # $6 - mandatory prune options string (see FIX #1/#4/#33)
         # $7 - mandatory interval label (e.g. "monthly-20260719"; pruneBorg
         #      uses its prefix to decide whether to also run borg compact)
+        # $8 - optional encryption mode for a fresh init (default: repokey)
+        # $9 - optional repo type ("borg" or "borgbase"; default: "borg").
+        #      "borgbase" uses ensureBorgBaseInit's borg-native (no shell)
+        #      existence/init check instead of direxists/dircreate - see
+        #      FIX #50 for why: BorgBase's forced-command SSH rejects any
+        #      non-borg command at all, including ls/mkdir.
         backendBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="backendBorg"
         backendBorg_repo="$1"
@@ -258,12 +357,18 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         backendBorg_srcpath="$5"
         backendBorg_pruneopts="$6"
         backendBorg_intervallabel="$7"
+        backendBorg_encryption="${8:-repokey}"
+        backendBorg_repotype="${9:-borg}"
 
-        if ! direxists "$backendBorg_repo"; then
-            msg "INFO" "Creating repo directory: $backendBorg_repo"
-            dircreate "$backendBorg_repo"
-            msg "INFO" "Init Borg repo: $backendBorg_repo"
-            initBorg "$backendBorg_repo" "$backendBorg_remotecmd"
+        if [ "$backendBorg_repotype" = "borgbase" ]; then
+            ensureBorgBaseInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+        else
+            if ! direxists "$backendBorg_repo"; then
+                msg "INFO" "Creating repo directory: $backendBorg_repo"
+                dircreate "$backendBorg_repo"
+                msg "INFO" "Init Borg repo: $backendBorg_repo"
+                initBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+            fi
         fi
 
         msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
@@ -282,6 +387,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset backendBorg_srcpath
         unset backendBorg_pruneopts
         unset backendBorg_intervallabel
+        unset backendBorg_encryption
+        unset backendBorg_repotype
         return 0
     }
 

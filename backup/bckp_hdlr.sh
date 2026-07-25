@@ -165,13 +165,20 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
                 strtBckpMchn_repospec=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 strtBckpMchn_borgremotecommand=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+                # FIX #50: optional third field - encryption mode for a
+                # fresh "borg init" (e.g. "repokey-blake2"). Empty/absent
+                # defaults to "repokey", preserving every existing config's
+                # behavior unchanged.
+                strtBckpMchn_encryption=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f3 | sed 's/^[ \t]*//;s/[ \t]*$//')
+                [ -z "$strtBckpMchn_encryption" ] && strtBckpMchn_encryption="repokey"
 
                 # FIX #41: backend dispatch. A REPOLIST entry may be
-                # prefixed with a backend type ("borg:" or "zfssend:"); no
-                # prefix defaults to "borg" so every existing config keeps
-                # working unchanged.
+                # prefixed with a backend type ("borg:", "zfssend:", or
+                # "borgbase:"); no prefix defaults to "borg" so every
+                # existing config keeps working unchanged.
                 case "$strtBckpMchn_repospec" in
                     borg:*) strtBckpMchn_repotype="borg"; strtBckpMchn_repo="${strtBckpMchn_repospec#borg:}" ;;
+                    borgbase:*) strtBckpMchn_repotype="borgbase"; strtBckpMchn_repo="${strtBckpMchn_repospec#borgbase:}" ;;
                     zfssend:*) strtBckpMchn_repotype="zfssend"; strtBckpMchn_repo="${strtBckpMchn_repospec#zfssend:}" ;;
                     *) strtBckpMchn_repotype="borg"; strtBckpMchn_repo="$strtBckpMchn_repospec" ;;
                 esac
@@ -185,8 +192,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
                     set +e
                     case "$strtBckpMchn_repotype" in
-                        borg)
-                            backendBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label"
+                        borg|borgbase)
+                            backendBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label" "$strtBckpMchn_encryption" "$strtBckpMchn_repotype"
                             ;;
                         zfssend)
                             backendZfsSend "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration"
@@ -226,6 +233,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_repo
         unset strtBckpMchn_repospec
         unset strtBckpMchn_repotype
+        unset strtBckpMchn_encryption
         unset strtBckpMchn_repolist
         unset strtBckpMchn_repoandcmd
         unset strtBckpMchn_intervallist
