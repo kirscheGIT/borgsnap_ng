@@ -172,22 +172,36 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
 
         if [ -n "$bckndZfsSend_resumetoken" ]; then
             bckndZfsSend_mode="resume"
-        elif zfs list -H "$bckndZfsSend_targetdataset" >/dev/null 2>&1; then
+        elif [ -n "$(zfs list -H -t snapshot -o name "$bckndZfsSend_targetdataset" 2>/dev/null)" ]; then
+            # FIX #54: check for the target having at least one snapshot
+            # of its OWN, not just "does the dataset exist". A target
+            # that has one or more sibling zfssend destinations nested
+            # underneath it (e.g. sending both "tank/data" and
+            # "tank/data/child" to the same target prefix) gets its
+            # parent hierarchy auto-created via "zfs create -p" purely to
+            # make room for the CHILD's own target - that parent dataset
+            # genuinely exists afterward, but was never itself an actual
+            # send destination, so it has zero snapshots. Checking bare
+            # existence would wrongly treat that empty scaffold dataset
+            # as "must have a bookmark from a previous send", producing a
+            # confusing "bookmark is missing" error for a target that was
+            # never really sent to in the first place.
+            #
             # FIX #43: full vs incremental. If the target dataset already
-            # exists (and there's no resume in progress), this must be an
-            # incremental send, which requires the bookmark left behind by
-            # the previous successful send - a bookmark survives even if
-            # the snapshot it pointed to has since been destroyed by
-            # source-side retention (pruneZFSSnapshot), which is exactly
-            # the problem plain snapshot-to-snapshot incrementals can't
-            # survive.
+            # has snapshots (and there's no resume in progress), this
+            # must be an incremental send, which requires the bookmark
+            # left behind by the previous successful send - a bookmark
+            # survives even if the snapshot it pointed to has since been
+            # destroyed by source-side retention (pruneZFSSnapshot),
+            # which is exactly the problem plain snapshot-to-snapshot
+            # incrementals can't survive.
             if ! zfs list -t bookmark -H "$bckndZfsSend_bookmark" >/dev/null 2>&1; then
                 unset bckndZfsSend_remotecmd
                 unset bckndZfsSend_keepduration
                 unset bckndZfsSend_resumetoken
                 unset bckndZfsSend_pool
                 unset bckndZfsSend_pool_imported_by_us
-                die "zfssend: target dataset '$bckndZfsSend_targetdataset' already exists but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
+                die "zfssend: target dataset '$bckndZfsSend_targetdataset' already has snapshots but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
             fi
             bckndZfsSend_mode="incremental"
         else

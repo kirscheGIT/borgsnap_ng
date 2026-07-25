@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.18
+# TESTKIT_VERSION=2026-07-20.19
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot]|bookmark [-H]
@@ -75,13 +75,14 @@ case "$cmd" in
     fi
     # crude arg parse: detect -H, -t VALUE, -s VALUE, -d 1, dataset filter
     # (last non-option arg)
-    H=0; ds=""; had_t=0; ttype=""
+    H=0; ds=""; had_t=0; ttype=""; recursive=0
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -H) H=1 ;;
         -t) had_t=1; shift; ttype="$1" ;;
         -o|-d|-s) shift ;;
-        -Hr) H=1 ;;
+        -Hr) H=1; recursive=1 ;;
+        -r) recursive=1 ;;
         -*) : ;;
         *) ds="$1" ;;
       esac
@@ -119,7 +120,11 @@ case "$cmd" in
       # sorting logic here.
       [ "$H" = 0 ] && echo "NAME"
       if [ -n "$ds" ]; then
-        grep -E "^${ds}(/[^@#]+)?@" "$MOCK_STATE" 2>/dev/null
+        if [ "$recursive" = 1 ]; then
+          grep -E "^${ds}(/[^@#]+)?@" "$MOCK_STATE" 2>/dev/null
+        else
+          grep -E "^${ds}@" "$MOCK_STATE" 2>/dev/null
+        fi
       else
         grep "@" "$MOCK_STATE" 2>/dev/null
       fi

@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.18
+# TESTKIT_VERSION=2026-07-20.19
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -804,6 +804,82 @@ assert "FIX52: the top-level (childless) dataset itself gets mounted" \
   "grep -q 'mount -t zfs tank/nochild@' '$MOCK_LOG'"
 assert "FIX52: borg create ran against the mounted top-level directory" \
   "grep -q 'borg create.*tank/nochild' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "zfssend sibling-target empty-parent false positive (FIX #54)"
+echo "-------------------------------------"
+
+# Reproduces a real-world scenario: two INDEPENDENT zfssend configs share
+# the same target prefix, and one source dataset is the parent of the
+# other (e.g. "tank/data" and "tank/data/child" backed up separately).
+# Sending the child first auto-creates an EMPTY placeholder at the
+# parent's own target path (zfs create -p, to make room for the child's
+# target underneath it) - that placeholder was never itself a genuine
+# send destination. A later, independent run targeting the PARENT
+# dataset must not mistake that empty scaffold for "a previous send
+# happened here, but the bookmark is now missing".
+WORKDIR11="$(mktemp -d)"
+MAILKEYFILE11="$WORKDIR11/test11.key"; echo "testpassphrase" > "$MAILKEYFILE11"; chmod 600 "$MAILKEYFILE11"
+
+cat > "$WORKDIR11/test11-child.conf" << EOF14
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data/child,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE11"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="zfssend:siblingtarget, ;"
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF14
+chmod 600 "$WORKDIR11/test11-child.conf"
+
+cat > "$WORKDIR11/test11-parent.conf" << EOF15
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE11"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="zfssend:siblingtarget, ;"
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF15
+chmod 600 "$WORKDIR11/test11-parent.conf"
+
+export MOCK_LOG="$WORKDIR11/mock.log"
+export MOCK_STATE="$WORKDIR11/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR11/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+
+# Step 1: back up the CHILD first - this auto-creates
+# "siblingtarget/tank/data" as an empty parent placeholder while actually
+# sending to "siblingtarget/tank/data/child".
+sh ./borgsnap_ng.sh run "$WORKDIR11/test11-child.conf" > "$WORKDIR11/run_child.log" 2>&1
+RC_SIBLINGCHILD=$?
+assert "FIX54: the child's own backup succeeds" "[ $RC_SIBLINGCHILD -eq 0 ]"
+assert "FIX54: sending the child auto-creates the empty parent placeholder" \
+  "grep -q 'zfs create -p siblingtarget/tank/data\$' '$MOCK_LOG'"
+
+# Step 2: back up the PARENT, targeting the same prefix - its target
+# dataset is exactly that empty placeholder. This must succeed as a FULL
+# send, not die complaining about a missing bookmark for a "previous"
+# send that never actually happened.
+: > "$MOCK_LOG"
+sh ./borgsnap_ng.sh run "$WORKDIR11/test11-parent.conf" > "$WORKDIR11/run_parent.log" 2>&1
+RC_SIBLINGPARENT=$?
+assert "FIX54: the parent's independent backup succeeds despite the empty placeholder" \
+  "[ $RC_SIBLINGPARENT -eq 0 ]"
+assert "FIX54: it did NOT wrongly complain about a missing bookmark" \
+  "! grep -q 'tracking bookmark' '$WORKDIR11/run_parent.log'"
+assert "FIX54: it correctly did a full send (not incremental) to the empty placeholder" \
+  "grep -q '^zfs send tank/data@' '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

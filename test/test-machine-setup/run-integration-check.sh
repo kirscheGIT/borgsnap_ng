@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.18
+# TESTKIT_VERSION=2026-07-20.19
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.18
+# TESTKIT_VERSION=2026-07-20.19
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.18"
+TESTKIT_VERSION="2026-07-20.19"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -110,6 +110,7 @@ preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #44"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #45"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #46"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #51"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #54"
 if [ ! -f "$REPO_ROOT/test/mocks/zpool" ]; then
   echo "PREFLIGHT: test/mocks/zpool not found - this is a new file introduced by FIX #46, not just an update to an existing one" >&2
   preflight_fail=1
