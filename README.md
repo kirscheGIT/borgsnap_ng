@@ -147,11 +147,18 @@ Borgsnap is pretty simple, it has the following basic flow:
   + Take a ZFS snapshot of the filesystem (recursively if enabled)
   + Run borg for the local output if configured
   + Run borg for the rsync.net output if configured
-  + Delete old ZFS snapshots (recursively if enabled)
+  + Delete old ZFS snapshots (exact dataset match only - see note below)
   + Prune local borg if configured and needed
   + Prune rsync.net borg if configured and needed
 
 That's it!
+
+Note: ZFS snapshot deletion/retention matches only the exact configured
+dataset, never its children - even if that dataset was snapshotted
+recursively. If you back up a dataset both recursively (as a parent) and
+separately as its own independent config entry for one of its children,
+see the warning next to `FS=` in `sample.conf` for a gotcha this creates
+with orphaned snapshots.
 
 If things fail, it is not currently re-entrant. For example, if a ZFS snapshot
 already exists for the day, the script will fail\*.  This could use a bit of
