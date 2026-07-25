@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.19
+# TESTKIT_VERSION=2026-07-20.20
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.19
+# TESTKIT_VERSION=2026-07-20.20
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.19"
+TESTKIT_VERSION="2026-07-20.20"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -102,6 +102,7 @@ preflight_check_marker "backup/bckp_hdlr.sh" "FIX #41"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #41"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #50"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #50"
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #55"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #41"
 preflight_check_marker "filesystem/zfs_snap_mount.sh" "FIX #52"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"

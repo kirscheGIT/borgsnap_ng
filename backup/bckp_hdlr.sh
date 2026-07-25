@@ -205,6 +205,23 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
                 fi
             done
+            # FIX #55: unmount BEFORE pruning, not after. pruneZFSSnapshot
+            # destroys old source snapshots by name/interval match alone -
+            # it has no dependency on anything being mounted. With the
+            # unmount happening afterward (the old order), a destroy that
+            # happens to target a snapshot still mounted from earlier in
+            # THIS SAME run (e.g. today's own snapshot, if retention's
+            # keep-count logic ever selects it) fails outright with
+            # "dataset is busy", since nothing has unmounted it yet at
+            # that point. Unmounting first removes the possibility
+            # entirely - by the time pruning runs, nothing this run
+            # mounted is still in the way.
+            msg "DEBUG" "--------------------------------------------------------------"
+            msg "DEBUG" "Snapmount base dir: $strtBckpMchn_snapmountbasedir " 
+            msg "DEBUG" "Snapmount dataset: $strtBckpMchn_dataset "
+            msg "DEBUG" "--------------------------------------------------------------"
+            umountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset"
+
             # FIX #41: pruneZFSSnapshot takes no repo-specific argument (its
             # 4th parameter is always empty) - it always operated purely on
             # the ZFS source side, independent of which/how many repos this
@@ -215,11 +232,6 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # dataset/interval instead.
             msg "DEBUG" "--------------------------- PRUNE ZFS -----------------------------------"
             pruneZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration" ""
-            msg "DEBUG" "--------------------------------------------------------------"
-            msg "DEBUG" "Snapmount base dir: $strtBckpMchn_snapmountbasedir " 
-            msg "DEBUG" "Snapmount dataset: $strtBckpMchn_dataset "
-            msg "DEBUG" "--------------------------------------------------------------"
-            umountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset"
 
             
         done

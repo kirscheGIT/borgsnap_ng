@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.19
+# TESTKIT_VERSION=2026-07-20.20
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -101,6 +101,8 @@ assert "FIX3: zfs destroy issued for old snapshots (prune works again)" \
   "grep -q 'zfs destroy -r tank/' '$MOCK_LOG'"
 assert "FIX3: oldest daily (20260701) destroyed, newest kept" \
   "grep -q 'zfs destroy -r tank/data@daily-20260701' '$MOCK_LOG' && ! grep -q 'destroy -r tank/data@daily-20260709' '$MOCK_LOG'"
+assert "FIX55: unmount happens before pruning destroys old snapshots, not after" \
+  "[ \"\$(grep -n 'umount .*/tank/data\$' '$MOCK_LOG' | head -1 | cut -d: -f1)\" -lt \"\$(grep -n 'zfs destroy -r tank/data@daily-20260701' '$MOCK_LOG' | head -1 | cut -d: -f1)\" ]"
 assert "FIX5: umount called for real mountpoints (depth 2)" \
   "grep -q 'umount .*/tank/data' '$MOCK_LOG'"
 assert "FIX5: recursive child mount also unmounted" \
