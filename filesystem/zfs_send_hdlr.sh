@@ -85,6 +85,24 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # FIX #46: the pool name is the target's first path component -
         # needed to check/attempt import before touching anything on it.
         bckndZfsSend_pool="${bckndZfsSend_target%%/*}"
+        # FIX #51: a target starting with "/" (a natural mistake - it looks
+        # like a filesystem path) makes the pool-name extraction above
+        # produce an EMPTY string, which would otherwise silently cascade
+        # into a confusing "pool '' could not be imported" failure much
+        # later, far from the actual mistake. ZFS dataset paths are
+        # "pool/dataset/path", never filesystem paths, and never start
+        # with "/" - catch this immediately instead, with a message that
+        # points at the actual fix.
+        if [ -z "$bckndZfsSend_pool" ]; then
+            unset bckndZfsSend_CALLINGFUCNTION
+            unset bckndZfsSend_remotecmd
+            unset bckndZfsSend_dataset
+            unset bckndZfsSend_label
+            unset bckndZfsSend_keepduration
+            unset bckndZfsSend_targetdataset
+            unset bckndZfsSend_pool
+            die "zfssend: target '$bckndZfsSend_target' starts with '/' - ZFS dataset paths are 'pool/dataset/path', not filesystem paths, and must never have a leading slash. Did you mean '${bckndZfsSend_target#/}'?"
+        fi
         # FIX #43: a bookmark name is scoped per-target (via this slug), so
         # the same source dataset can be sent to more than one zfssend
         # target, each tracked independently.

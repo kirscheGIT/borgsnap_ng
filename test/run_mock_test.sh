@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.15
+# TESTKIT_VERSION=2026-07-20.16
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -723,6 +723,42 @@ RC_NOENC=$?
 assert "FIX50: no encryption field specified - run still succeeds" "[ $RC_NOENC -eq 0 ]"
 assert "FIX50: defaults to repokey when no encryption field is given" \
   "grep -q '^borg init --encryption=repokey ' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "zfssend leading-slash target validation (FIX #51)"
+echo "-------------------------------------"
+
+WORKDIR9="$(mktemp -d)"
+MAILKEYFILE9="$WORKDIR9/test9.key"; echo "testpassphrase" > "$MAILKEYFILE9"; chmod 600 "$MAILKEYFILE9"
+cat > "$WORKDIR9/test9-leadingslash.conf" << EOF12
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE9"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="zfssend:/borgsnap_test_zfs_rcv, ;"
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF12
+chmod 600 "$WORKDIR9/test9-leadingslash.conf"
+
+export MOCK_LOG="$WORKDIR9/mock.log"
+export MOCK_STATE="$WORKDIR9/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR9/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR9/test9-leadingslash.conf" > "$WORKDIR9/run_leadingslash.log" 2>&1
+RC_LEADINGSLASH=$?
+assert "FIX51: a leading-slash target fails the run (not a silent empty-pool cascade)" "[ $RC_LEADINGSLASH -ne 0 ]"
+assert "FIX51: the error names the actual problem (leading slash)" \
+  "grep -q \"starts with '/'\" '$WORKDIR9/run_leadingslash.log'"
+assert "FIX51: the error suggests the actual fix (path without the slash)" \
+  "grep -q 'borgsnap_test_zfs_rcv' '$WORKDIR9/run_leadingslash.log'"
+assert "FIX51: no confusing empty-pool-name message appears" \
+  "! grep -q \"pool '' \" '$WORKDIR9/run_leadingslash.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
