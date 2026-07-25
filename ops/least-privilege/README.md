@@ -47,9 +47,14 @@ sudo ./setup-zfs-allow.sh target borg usbpool/backups
 
 Requires OpenZFS >= 2.2 for the `receive:append` permission (rejects
 destructive receives - our code never does one anyway, so this is a free
-safety net granted *alongside* plain `receive`, not instead of it - see
-the comments in `setup-zfs-allow.sh` for why both are needed together).
-Check with `zfs version` if unsure.
+safety net granted *alongside* plain `receive`, not instead of it).
+`mount` is also granted on both sides - not because it can functionally
+mount anything on Linux (it can't), but because ZFS's own internal
+dependency checks for `create`/`receive`/`destroy` require it to be
+*present* in the delegation table, or those operations are rejected
+outright with "permission denied". See the comments in
+`setup-zfs-allow.sh` for the full reasoning and the real-world report that
+uncovered this. Check `zfs version` if unsure about the OpenZFS version.
 
 ## Verifying it all worked
 

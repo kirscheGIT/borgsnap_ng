@@ -19,24 +19,31 @@
 # Background / why these specific permissions (see the conversation this
 # was designed in for the full research trail):
 #
-#   SOURCE side (where your live data lives): snapshot, destroy, send,
-#   bookmark, hold, release. This never needs "mount" - the source dataset
-#   is already mounted normally by the system at boot; borgsnap_ng only
-#   snapshots/sends from it, never (re-)mounts it itself via zfs allow.
+#   SOURCE side (where your live data lives): snapshot, destroy, mount,
+#   send, bookmark, hold, release. The source dataset is already mounted
+#   normally by the system at boot and never needs (re-)mounting through
+#   this delegation - "mount" is included purely because "destroy" (used
+#   for retention pruning) has it as an internal ZFS dependency, the same
+#   pattern as the target side below.
 #
 #   TARGET side (zfssend destinations only - skip this if you only use the
-#   borg backend): create, receive, receive:append, destroy, readonly.
+#   borg backend): create, mount, receive, receive:append, destroy,
+#   readonly.
+#     - "mount" is granted even though the underlying Linux mount(8)
+#       syscall will still refuse to actually mount anything as this user
+#       (see the OpenZFS docs quote above) - but ZFS's own internal
+#       dependency check for create/receive requires "mount" to be
+#       PRESENT in the delegation table, or the receive is rejected
+#       outright with "cannot receive new filesystem stream: permission
+#       denied" (confirmed by Klara Systems' own tested walkthrough -
+#       receive+create alone reproduces exactly this error; adding mount,
+#       even though it can't functionally succeed, changes it to the much
+#       softer "cannot mount ... failed to create mountpoint", which
+#       mountpoint=none below avoids ever triggering in the first place).
 #     - Both receive AND receive:append are granted together, not
-#       receive:append alone. The official man page lists receive:append's
-#       own dependency as "mount and create" - and mount can never be
-#       delegated on Linux at all (see below), so receive:append alone can
-#       fail with "cannot receive new filesystem stream: permission
-#       denied" in practice, even though the documentation reads as if it
-#       should be self-sufficient. Real-world reports (e.g. the
-#       Sanoid/Syncoid project's own delegation issues) confirm this area
-#       of ZFS is more finicky than the docs suggest - granting both
-#       together matches the tested, working configuration other
-#       replication tools (Zelta) actually ship.
+#       receive:append alone - real-world reports (Sanoid/Syncoid's own
+#       delegation issues, old SmartOS/illumos reports) confirm this area
+#       of ZFS is more finicky than the docs alone suggest.
 #     - receive:append additionally rejects destructive receives (zfs recv
 #       -F), which our code never uses anyway - free extra safety on top
 #       of plain receive, not a replacement for it.
@@ -78,8 +85,13 @@ fi
 case "$zfsallow_mode" in
     source)
         echo "==> Delegating SOURCE-side permissions to '$zfsallow_user' on '$zfsallow_dataset'"
-        echo "    (snapshot, destroy, send, bookmark, hold, release)"
-        zfs allow -u "$zfsallow_user" snapshot,destroy,send,bookmark,hold,release "$zfsallow_dataset"
+        echo "    (snapshot, destroy, mount, send, bookmark, hold, release)"
+        echo "    Note: 'mount' is included for the same reason as on the target side -"
+        echo "    ZFS's own internal dependency check for 'destroy' requires 'mount' to"
+        echo "    be present in the delegation table, even though the source dataset is"
+        echo "    already mounted normally by the system and never needs re-mounting"
+        echo "    here."
+        zfs allow -u "$zfsallow_user" snapshot,destroy,mount,send,bookmark,hold,release "$zfsallow_dataset"
         ;;
     target)
         echo "==> Setting mountpoint=none on '$zfsallow_dataset' (and its descendants)"
@@ -93,8 +105,15 @@ case "$zfsallow_mode" in
         zfs set mountpoint=none "$zfsallow_dataset"
 
         echo "==> Delegating TARGET-side permissions to '$zfsallow_user' on '$zfsallow_dataset'"
-        echo "    (create, receive, receive:append, destroy, readonly)"
-        zfs allow -u "$zfsallow_user" create,receive,receive:append,destroy,readonly "$zfsallow_dataset"
+        echo "    (create, mount, receive, receive:append, destroy, readonly)"
+        echo "    Note: 'mount' is granted even though it can't functionally mount on"
+        echo "    Linux (see the sudoers piece for real mounting elsewhere) - ZFS's own"
+        echo "    internal dependency check for create/receive requires it to be PRESENT"
+        echo "    in the delegation table, or you get 'cannot receive new filesystem"
+        echo "    stream: permission denied' outright. mountpoint=none (set above) means"
+        echo "    the actual (would-be-blocked) auto-mount attempt never happens, so this"
+        echo "    is safe - we only need the dependency check satisfied, not real mounting."
+        zfs allow -u "$zfsallow_user" create,mount,receive,receive:append,destroy,readonly "$zfsallow_dataset"
         ;;
     *)
         usage
