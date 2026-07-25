@@ -229,9 +229,32 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
                 ;;
             full)
                 msg "DEBUG" "Full send: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
-                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive -s $bckndZfsSend_targetdataset"
+                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive -s -F $bckndZfsSend_targetdataset"
+                # FIX #56: -F here is safe and necessary, not a general
+                # destructive-receive risk:
+                #   - necessary: plain "zfs receive" (no -F) refuses
+                #     outright with "destination exists, must specify -F"
+                #     if the target dataset already exists AT ALL - even
+                #     with zero snapshots of its own. That's exactly a
+                #     sibling zfssend target's auto-created empty parent
+                #     placeholder (FIX #54's scenario: e.g. sending both
+                #     "tank/data" and "tank/data/child" to the same target
+                #     prefix creates "targetprefix/tank/data" as an empty
+                #     container while actually receiving into
+                #     "targetprefix/tank/data/child" underneath it).
+                #   - safe: by the time "full" mode is chosen at all,
+                #     FIX #54's own check has already confirmed the target
+                #     has zero snapshots of its own - -F's "rollback to
+                #     most recent snapshot" has nothing to discard. The
+                #     man page's much scarier "-F destroys filesystems not
+                #     present on the sending side" danger is specifically
+                #     documented for REPLICATION streams (zfs send -R) -
+                #     our code never sends with -R, so a real child
+                #     dataset like first_child_set is never touched by
+                #     this; -F here only ever affects the target dataset's
+                #     own (empty) history, nothing nested underneath it.
                 { zfs send "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
-                { zfs receive -s "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+                { zfs receive -s -F "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
                 ;;
             *)
                 msg "DEBUG" "Incremental send: $bckndZfsSend_bookmark -> $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
