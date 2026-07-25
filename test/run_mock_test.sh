@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.16
+# TESTKIT_VERSION=2026-07-20.17
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -105,6 +105,8 @@ assert "FIX5: umount called for real mountpoints (depth 2)" \
   "grep -q 'umount .*/tank/data' '$MOCK_LOG'"
 assert "FIX5: recursive child mount also unmounted" \
   "grep -q 'umount .*/tank/data/child' '$MOCK_LOG'"
+assert "FIX52: the top-level dataset itself is mounted, not just its child" \
+  "grep -q \"mount -t zfs tank/data@\" '$MOCK_LOG'"
 assert "FIX39: snapshot mount base is /run/borgsnap, not /tmp" \
   "grep -q '/run/borgsnap/tank/data' '$MOCK_LOG' && ! grep -q '/tmp/borgsnap_ng' '$MOCK_LOG'"
 assert "FIX7: no pgrep wait loop hangs (run.log has no waiting messages)" \
@@ -759,6 +761,46 @@ assert "FIX51: the error suggests the actual fix (path without the slash)" \
   "grep -q 'borgsnap_test_zfs_rcv' '$WORKDIR9/run_leadingslash.log'"
 assert "FIX51: no confusing empty-pool-name message appears" \
   "! grep -q \"pool '' \" '$WORKDIR9/run_leadingslash.log'"
+
+echo "-------------------------------------"
+echo "Recursive mount with zero actual children (FIX #52)"
+echo "-------------------------------------"
+
+# The mock normally simulates one synthetic child for every recursive
+# snapshot (see test/mocks/zfs), which would make it impossible to ever
+# hit the real-world case this bug needed: a dataset with the recursive
+# flag set, but genuinely zero children. MOCK_ZFS_NO_CHILD=1 disables
+# that simulation for this section specifically.
+WORKDIR10="$(mktemp -d)"
+mkdir -p "$WORKDIR10/repo1"
+MAILKEYFILE10="$WORKDIR10/test10.key"; echo "testpassphrase" > "$MAILKEYFILE10"; chmod 600 "$MAILKEYFILE10"
+cat > "$WORKDIR10/test10-nochild.conf" << EOF13
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/nochild,r ;"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE10"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR10/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF13
+chmod 600 "$WORKDIR10/test10-nochild.conf"
+
+export MOCK_LOG="$WORKDIR10/mock.log"
+export MOCK_STATE="$WORKDIR10/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR10/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_NO_CHILD=1 sh ./borgsnap_ng.sh run "$WORKDIR10/test10-nochild.conf" > "$WORKDIR10/run_nochild.log" 2>&1
+RC_NOCHILD=$?
+assert "FIX52: a recursive dataset with zero actual children still succeeds" "[ $RC_NOCHILD -eq 0 ]"
+assert "FIX52: the top-level (childless) dataset itself gets mounted" \
+  "grep -q 'mount -t zfs tank/nochild@' '$MOCK_LOG'"
+assert "FIX52: borg create ran against the mounted top-level directory" \
+  "grep -q 'borg create.*tank/nochild' '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

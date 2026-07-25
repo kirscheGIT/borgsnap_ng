@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.16
+# TESTKIT_VERSION=2026-07-20.17
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.16
+# TESTKIT_VERSION=2026-07-20.17
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.16"
+TESTKIT_VERSION="2026-07-20.17"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -103,6 +103,7 @@ preflight_check_marker "borg/borg_hdlr.sh" "FIX #41"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #50"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #50"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #41"
+preflight_check_marker "filesystem/zfs_snap_mount.sh" "FIX #52"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #43"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #44"
@@ -245,6 +246,14 @@ if [ "$RUN_REAL" -eq 1 ]; then
         # --- 2. a real child dataset, to exercise the recursive path ---
         zfs list testpool/data/sub >/dev/null 2>&1 || zfs create testpool/data/sub
 
+        # FIX #52: a marker file directly in the PARENT dataset (not the
+        # child) - the bug this guards against silently mounted only
+        # child datasets in the recursive branch, never the top-level
+        # dataset itself, so its own files never made it into the borg
+        # archive at all. A marker in the child alone wouldn't catch that
+        # regression; it has to live in testpool/data directly.
+        echo fix52-parent-marker-content > /testpool/data/fix52-parent-marker.txt
+
         # --- 3. scratch dir: keyfile, two local repos ------------------
         # NOTE: do NOT pre-create repo1/repo2 here. borgsnap_ng.sh only
         # calls initBorg() when the repo directory does not already exist
@@ -335,6 +344,14 @@ CONF
           zfs list -t snapshot | grep 'testpool/data/sub@' && echo 'YES' || echo 'NO (recursive fix did not propagate!)'
           echo '--- borg archives, repo1 ---'
           BORG_PASSPHRASE=\$(cat '$REAL_TESTDIR/test.key') borg list '$REAL_TESTDIR/repo1' 2>&1
+          echo '--- FIX #52: does the archive actually contain the PARENT dataset file, not just the child? ---'
+          REAL_ARCHIVE=\$(BORG_PASSPHRASE=\$(cat '$REAL_TESTDIR/test.key') borg list --short '$REAL_TESTDIR/repo1' 2>/dev/null | grep testpool_data- | tail -1)
+          if BORG_PASSPHRASE=\$(cat '$REAL_TESTDIR/test.key') borg list \"$REAL_TESTDIR/repo1::\$REAL_ARCHIVE\" 2>&1 | grep -q fix52-parent-marker.txt; then
+            echo 'YES - parent file present'
+          else
+            echo 'NO - parent dataset content missing from archive!'
+            exit 1
+          fi
         "
         VERIFY_RC=$?
         set -e

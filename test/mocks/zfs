@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.16
+# TESTKIT_VERSION=2026-07-20.17
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot]|bookmark [-H]
@@ -54,9 +54,11 @@ case "$cmd" in
     snap="$1"
     grep -qxF "$snap" "$MOCK_STATE" && { echo "cannot create snapshot '$snap': dataset already exists" >&2; exit 1; }
     echo "$snap" >> "$MOCK_STATE"
-    if [ "$recursive" = 1 ]; then
+    if [ "$recursive" = 1 ] && [ "${MOCK_ZFS_NO_CHILD:-0}" != 1 ]; then
       ds="${snap%@*}"; label="${snap#*@}"
-      # simulate one child dataset for recursion tests
+      # simulate one child dataset for recursion tests (unless
+      # MOCK_ZFS_NO_CHILD=1 - needed to test the genuine "recursive flag
+      # set, but the dataset actually has zero children" case, FIX #52)
       echo "$ds/child@$label" >> "$MOCK_STATE"
     fi
     exit 0 ;;
