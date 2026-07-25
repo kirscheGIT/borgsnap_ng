@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.20
+# TESTKIT_VERSION=2026-07-20.21
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -254,7 +254,7 @@ assert "FIX42: first zfssend run (fresh target) succeeds" "[ $RC_ZFSSEND1 -eq 0 
 assert "FIX42: zfs send (full, no -i) was invoked for the source snapshot" \
   "grep -q 'zfs send tank/data@' '$MOCK_LOG'"
 assert "FIX42: zfs receive -s was invoked for the mirrored target path" \
-  "grep -q 'zfs receive -s tank/zfssendtarget/tank/data' '$MOCK_LOG'"
+  "grep -q 'zfs receive -s -F tank/zfssendtarget/tank/data' '$MOCK_LOG'"
 assert "FIX42: target dataset exists after the send (mirrored under the target prefix)" \
   "grep -q '^tank/zfssendtarget/tank/data' '$MOCK_STATE'"
 assert "FIX43: tracking bookmark was created after the first send" \
@@ -423,7 +423,7 @@ RC_POOLIMPORT=$?
 assert "FIX46: run succeeds when the target pool needs importing first" "[ $RC_POOLIMPORT -eq 0 ]"
 assert "FIX46: zpool import was attempted" "grep -q 'zpool import usbpool' '$MOCK_LOG'"
 assert "FIX46: zpool export happened afterward (we imported it ourselves)" "grep -q 'zpool export usbpool' '$MOCK_LOG'"
-assert "FIX46: the actual backup still happened" "grep -q 'zfs receive -s usbpool/backups/tank/data' '$MOCK_LOG'"
+assert "FIX46: the actual backup still happened" "grep -q 'zfs receive -s -F usbpool/backups/tank/data' '$MOCK_LOG'"
 
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_ZPOOL_NOT_IMPORTED="usbpool" MOCK_ZPOOL_FAIL_IMPORT=1 sh ./borgsnap_ng.sh run "$WORKDIR4/test4-zfssend.conf" > "$WORKDIR4/run_pool_notattached.log" 2>&1
@@ -882,6 +882,8 @@ assert "FIX54: it did NOT wrongly complain about a missing bookmark" \
   "! grep -q 'tracking bookmark' '$WORKDIR11/run_parent.log'"
 assert "FIX54: it correctly did a full send (not incremental) to the empty placeholder" \
   "grep -q '^zfs send tank/data@' '$MOCK_LOG'"
+assert "FIX56: the -F full send used for the empty placeholder does not touch the child's real data" \
+  "grep -qxF 'siblingtarget/tank/data/child' '$MOCK_STATE'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
