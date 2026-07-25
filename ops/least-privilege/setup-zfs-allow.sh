@@ -25,10 +25,21 @@
 #   snapshots/sends from it, never (re-)mounts it itself via zfs allow.
 #
 #   TARGET side (zfssend destinations only - skip this if you only use the
-#   borg backend): create, receive:append, destroy, readonly.
-#     - receive:append (not plain "receive") requires OpenZFS >= 2.2 -
-#       it rejects destructive receives (zfs recv -F), which our code
-#       never uses anyway, so this is free extra safety with no downside.
+#   borg backend): create, receive, receive:append, destroy, readonly.
+#     - Both receive AND receive:append are granted together, not
+#       receive:append alone. The official man page lists receive:append's
+#       own dependency as "mount and create" - and mount can never be
+#       delegated on Linux at all (see below), so receive:append alone can
+#       fail with "cannot receive new filesystem stream: permission
+#       denied" in practice, even though the documentation reads as if it
+#       should be self-sufficient. Real-world reports (e.g. the
+#       Sanoid/Syncoid project's own delegation issues) confirm this area
+#       of ZFS is more finicky than the docs suggest - granting both
+#       together matches the tested, working configuration other
+#       replication tools (Zelta) actually ship.
+#     - receive:append additionally rejects destructive receives (zfs recv
+#       -F), which our code never uses anyway - free extra safety on top
+#       of plain receive, not a replacement for it.
 #     - "mount" is NOT delegable on Linux at all (OpenZFS's own docs:
 #       "these permissions cannot be delegated because the Linux mount(8)
 #       command restricts modifications of the global namespace to the
@@ -82,8 +93,8 @@ case "$zfsallow_mode" in
         zfs set mountpoint=none "$zfsallow_dataset"
 
         echo "==> Delegating TARGET-side permissions to '$zfsallow_user' on '$zfsallow_dataset'"
-        echo "    (create, receive:append, destroy, readonly)"
-        zfs allow -u "$zfsallow_user" create,receive:append,destroy,readonly "$zfsallow_dataset"
+        echo "    (create, receive, receive:append, destroy, readonly)"
+        zfs allow -u "$zfsallow_user" create,receive,receive:append,destroy,readonly "$zfsallow_dataset"
         ;;
     *)
         usage
