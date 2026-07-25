@@ -161,7 +161,30 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # part of the archive name, otherwise prune would consider every
             # dataset's archives together instead of scoping to this one.
             strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration --glob-archives '$strtBckpMchn_dataslug-${strtBckpMchn_label%-*}-*'"
-            
+
+            # BORG_VERIFY: look up this interval's configured "borg check"
+            # depth once, here - not per repo below, since it depends only
+            # on the interval (e.g. "monthly"), not on which repo is being
+            # backed up to. Defaults to "off" if BORG_VERIFY is unset, or
+            # this specific interval has no entry in it.
+            strtBckpMchn_verifydepth="off"
+            if [ -n "${BORG_VERIFY:-}" ]; then
+                strtBckpMchn_verify_OLD_IFS="$IFS"
+                IFS=';'
+                for strtBckpMchn_verify_entry in $BORG_VERIFY; do
+                    IFS=' '
+                    case "$strtBckpMchn_verify_entry" in
+                        "${strtBckpMchn_label%-*}:"*)
+                            strtBckpMchn_verifydepth="${strtBckpMchn_verify_entry#*:}"
+                            ;;
+                    esac
+                    IFS=';'
+                done
+                IFS="$strtBckpMchn_verify_OLD_IFS"
+                unset strtBckpMchn_verify_OLD_IFS
+                unset strtBckpMchn_verify_entry
+            fi
+
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
                 strtBckpMchn_repospec=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 strtBckpMchn_borgremotecommand=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
@@ -193,7 +216,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     set +e
                     case "$strtBckpMchn_repotype" in
                         borg|borgbase)
-                            backendBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label" "$strtBckpMchn_encryption" "$strtBckpMchn_repotype"
+                            backendBorg "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_borglabel" "$strtBckpMchn_borgrepoopts" "$strtBckpMchn_snapmountbasedir/$strtBckpMchn_dataset" "$strtBckpMchn_pruneopts" "$strtBckpMchn_label" "$strtBckpMchn_encryption" "$strtBckpMchn_repotype" "$strtBckpMchn_verifydepth"
                             ;;
                         zfssend)
                             backendZfsSend "$strtBckpMchn_repo" "$strtBckpMchn_borgremotecommand" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_keepduration"
@@ -256,6 +279,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_dataslug
         unset strtBckpMchn_borglabel
         unset strtBckpMchn_pruneopts
+        unset strtBckpMchn_verifydepth
         unset strtBckpMchn_lastsnap       
         unset strtBckpMchn_keepduration
         unset strtBckpMchn_recursive

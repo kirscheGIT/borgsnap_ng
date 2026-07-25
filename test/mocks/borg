@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.21
+# TESTKIT_VERSION=2026-07-20.22
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
@@ -10,6 +10,9 @@
 #     (FIX #50): 15 = Repository.InvalidRepository (exists, not yet
 #     init'd), 13 = Repository.DoesNotExist, or any other real borg exit
 #     code for testing the "unexpected error" path.
+#   MOCK_BORG_CHECK_RC=<code>   any "borg check" call exits with this code
+#     instead of 0. Used to simulate a real "borg check" finding a
+#     problem, for testing BORG_VERIFY's warn-not-die handling.
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 echo "borg $*" >> "$MOCK_LOG"
 if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
@@ -24,5 +27,9 @@ fi
 if [ "$1" = "list" ] && [ -n "${MOCK_BORG_LIST_RC:-}" ] && [ "$MOCK_BORG_LIST_RC" -ne 0 ]; then
   echo "mock borg list: simulated exit $MOCK_BORG_LIST_RC (MOCK_BORG_LIST_RC)" >&2
   exit "$MOCK_BORG_LIST_RC"
+fi
+if [ "$1" = "check" ] && [ -n "${MOCK_BORG_CHECK_RC:-}" ] && [ "$MOCK_BORG_CHECK_RC" -ne 0 ]; then
+  echo "mock borg check: simulated problem found, exit $MOCK_BORG_CHECK_RC (MOCK_BORG_CHECK_RC)" >&2
+  exit "$MOCK_BORG_CHECK_RC"
 fi
 exit 0

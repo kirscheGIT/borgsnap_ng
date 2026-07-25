@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.21
+# TESTKIT_VERSION=2026-07-20.22
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -884,6 +884,176 @@ assert "FIX54: it correctly did a full send (not incremental) to the empty place
   "grep -q '^zfs send tank/data@' '$MOCK_LOG'"
 assert "FIX56: the -F full send used for the empty placeholder does not touch the child's real data" \
   "grep -qxF 'siblingtarget/tank/data/child' '$MOCK_STATE'"
+
+echo "-------------------------------------"
+echo "Restorability verification depth (BORG_VERIFY)"
+echo "-------------------------------------"
+
+WORKDIR12="$(mktemp -d)"
+mkdir -p "$WORKDIR12/repo1"
+MAILKEYFILE12="$WORKDIR12/test12.key"; echo "testpassphrase" > "$MAILKEYFILE12"; chmod 600 "$MAILKEYFILE12"
+
+export MOCK_LOG="$WORKDIR12/mock.log"
+export MOCK_STATE="$WORKDIR12/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR12/lock"
+
+# Scenario A: BORG_VERIFY not set at all - no "borg check" call, existing
+# behavior unchanged for every config that predates this feature.
+cat > "$WORKDIR12/test12-noverify.conf" << EOF16
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF16
+chmod 600 "$WORKDIR12/test12-noverify.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-noverify.conf" > "$WORKDIR12/run_noverify.log" 2>&1
+RC_NOVERIFY=$?
+assert "BORG_VERIFY: unset - run succeeds normally" "[ $RC_NOVERIFY -eq 0 ]"
+assert "BORG_VERIFY: unset - no borg check is ever called" "! grep -q '^borg check' '$MOCK_LOG'"
+
+# Determine which interval label this mock date actually produces, so the
+# remaining scenarios target a depth that will genuinely be looked up
+# (rather than guessing and silently testing nothing).
+ACTUAL_INTERVAL=$(grep -oE 'borg create.*::[a-z_]+-([a-z]+)-[0-9]+ ' "$MOCK_LOG" | head -1 | sed -E 's/.*-([a-z]+)-[0-9]+ /\1/')
+
+# Scenario B: configured depth "repo" for today's actual interval.
+cat > "$WORKDIR12/test12-repo.conf" << EOF17
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="${ACTUAL_INTERVAL}:repo"
+EOF17
+chmod 600 "$WORKDIR12/test12-repo.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-repo.conf" > "$WORKDIR12/run_repo.log" 2>&1
+RC_REPO=$?
+assert "BORG_VERIFY: depth 'repo' - run succeeds" "[ $RC_REPO -eq 0 ]"
+assert "BORG_VERIFY: depth 'repo' - borg check --repository-only was called" \
+  "grep -q '^borg check --repository-only' '$MOCK_LOG'"
+
+# Scenario C: configured depth "archive".
+cat > "$WORKDIR12/test12-archive.conf" << EOF18
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="${ACTUAL_INTERVAL}:archive"
+EOF18
+chmod 600 "$WORKDIR12/test12-archive.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-archive.conf" > "$WORKDIR12/run_archive.log" 2>&1
+RC_ARCHIVE=$?
+assert "BORG_VERIFY: depth 'archive' - run succeeds" "[ $RC_ARCHIVE -eq 0 ]"
+assert "BORG_VERIFY: depth 'archive' - borg check --archives-only was called" \
+  "grep -q '^borg check --archives-only' '$MOCK_LOG'"
+
+# Scenario D: configured depth "data".
+cat > "$WORKDIR12/test12-data.conf" << EOF19
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="${ACTUAL_INTERVAL}:data"
+EOF19
+chmod 600 "$WORKDIR12/test12-data.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-data.conf" > "$WORKDIR12/run_data.log" 2>&1
+RC_DATA=$?
+assert "BORG_VERIFY: depth 'data' - run succeeds" "[ $RC_DATA -eq 0 ]"
+assert "BORG_VERIFY: depth 'data' - borg check --verify-data was called" \
+  "grep -q '^borg check --verify-data' '$MOCK_LOG'"
+
+# Scenario E: BORG_VERIFY configured, but for a DIFFERENT interval than
+# today's - no matching entry, defaults to off, no check call.
+cat > "$WORKDIR12/test12-nomatch.conf" << EOF20
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="some_other_interval_never_matches:data"
+EOF20
+chmod 600 "$WORKDIR12/test12-nomatch.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-nomatch.conf" > "$WORKDIR12/run_nomatch.log" 2>&1
+RC_NOMATCH=$?
+assert "BORG_VERIFY: no matching interval entry - run succeeds" "[ $RC_NOMATCH -eq 0 ]"
+assert "BORG_VERIFY: no matching interval entry - no borg check is called" \
+  "! grep -q '^borg check' '$MOCK_LOG'"
+
+# Scenario F: borg check finds a problem - must warn, NOT abort the run.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_CHECK_RC=1 sh ./borgsnap_ng.sh run "$WORKDIR12/test12-data.conf" > "$WORKDIR12/run_checkfail.log" 2>&1
+RC_CHECKFAIL=$?
+assert "BORG_VERIFY: a check finding a problem does NOT abort the run" "[ $RC_CHECKFAIL -eq 0 ]"
+assert "BORG_VERIFY: a check finding a problem is logged as a clear WARNING" \
+  "grep -q 'WARNING.*borg check found a problem' '$WORKDIR12/run_checkfail.log'"
+
+# Scenario G: an invalid depth in BORG_VERIFY is rejected at config load
+# time, not silently ignored.
+cat > "$WORKDIR12/test12-invalid.conf" << EOF21
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="monthly:thorough"
+EOF21
+chmod 600 "$WORKDIR12/test12-invalid.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-invalid.conf" > "$WORKDIR12/run_invalid.log" 2>&1
+RC_INVALID=$?
+assert "BORG_VERIFY: an invalid depth value is rejected, not silently ignored" "[ $RC_INVALID -ne 0 ]"
+assert "BORG_VERIFY: the rejection message names the actual problem" \
+  "grep -q \"invalid depth 'thorough'\" '$WORKDIR12/run_invalid.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

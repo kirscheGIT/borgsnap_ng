@@ -329,6 +329,92 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         return 0
     }
 
+    checkBorg(){
+        # BORG_VERIFY: runs "borg check" at a configurable depth after
+        # pruning, so a corrupted/unrestorable repo is caught proactively
+        # instead of discovered during an actual disaster recovery attempt.
+        # $1 - mandatory repo path
+        # $2 - optional borg remote command
+        # $3 - mandatory verify depth: "off" (no-op), "repo"
+        #      (--repository-only, cheapest - runs server-side for ssh://
+        #      repos), "archive" (--archives-only, archive metadata, no
+        #      file data read), or "data" (--verify-data, full
+        #      cryptographic verification of all backed-up data - by far
+        #      the most thorough, and the most expensive).
+        checkBorg_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkBorg"
+        checkBorg_repo="$1"
+        checkBorg_remotecmd="$2"
+        checkBorg_depth="$3"
+
+        if [ -z "$checkBorg_depth" ] || [ "$checkBorg_depth" = "off" ]; then
+            LASTFUNC="$checkBorg_CALLINGFUCNTION"
+            unset checkBorg_CALLINGFUCNTION
+            unset checkBorg_repo
+            unset checkBorg_remotecmd
+            unset checkBorg_depth
+            return 0
+        fi
+
+        case "$checkBorg_depth" in
+            repo) checkBorg_flags="--repository-only" ;;
+            archive) checkBorg_flags="--archives-only" ;;
+            data) checkBorg_flags="--verify-data" ;;
+            *)
+                msg "WARNING" "checkBorg: unknown verify depth '$checkBorg_depth' for repo '$checkBorg_repo' - skipping verification this run"
+                LASTFUNC="$checkBorg_CALLINGFUCNTION"
+                unset checkBorg_CALLINGFUCNTION
+                unset checkBorg_repo
+                unset checkBorg_remotecmd
+                unset checkBorg_depth
+                return 0
+                ;;
+        esac
+
+        if [ -n "$checkBorg_remotecmd" ]; then
+            checkBorg_remotepath="--remote-path=${checkBorg_remotecmd}"
+        else
+            checkBorg_remotepath="--remote-path=borg"
+        fi
+
+        msg "DEBUG" "--------------------------- CHECK BORG (depth: $checkBorg_depth) -----------------------------------"
+        msg "DEBUG" "Repo is: $checkBorg_repo "
+
+        if [ "${checkBorg_repo#ssh://}" != "$checkBorg_repo" ]; then
+            checkBorg_cmdline="borg check $checkBorg_flags --show-rc $checkBorg_remotepath $checkBorg_repo"
+        else
+            checkBorg_cmdline="borg check $checkBorg_flags --show-rc $checkBorg_repo"
+        fi
+        msg "DEBUG" "Borg check cmdline: $checkBorg_cmdline"
+
+        # Deliberately not exec_cmd/die on failure: a check finding a
+        # problem is serious, but doesn't mean TODAY's backup itself is
+        # bad - an OLDER archive could be the corrupted one. Aborting the
+        # whole run over this would be disruptive for something that's
+        # rarely urgently actionable mid-run. A WARNING is enough to get
+        # picked up by FIX #48's mail escalation automatically (elevated
+        # priority, surfaced at the top of the notification) - no new
+        # mechanism needed.
+        eval "$checkBorg_cmdline"
+        checkBorg_rc=$?
+        if [ "$checkBorg_rc" -ne 0 ]; then
+            msg "WARNING" "borg check found a problem in repo '$checkBorg_repo' (depth: $checkBorg_depth, exit $checkBorg_rc) - see the check output above for details. This does not necessarily mean today's archive is affected; investigate before relying on this repo for a restore."
+        else
+            msg "INFO" "borg check (depth: $checkBorg_depth) passed for repo '$checkBorg_repo'"
+        fi
+
+        LASTFUNC="$checkBorg_CALLINGFUCNTION"
+        unset checkBorg_CALLINGFUCNTION
+        unset checkBorg_repo
+        unset checkBorg_remotecmd
+        unset checkBorg_depth
+        unset checkBorg_remotepath
+        unset checkBorg_cmdline
+        unset checkBorg_flags
+        unset checkBorg_rc
+        return 0
+    }
+
     backendBorg(){
         # FIX #41: backend wrapper called from startBackupMachine's repo
         # dispatch (see backup/bckp_hdlr.sh). Bundles the existing
@@ -348,6 +434,9 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      existence/init check instead of direxists/dircreate - see
         #      FIX #50 for why: BorgBase's forced-command SSH rejects any
         #      non-borg command at all, including ls/mkdir.
+        # $10 - optional BORG_VERIFY depth for this run's interval
+        #       ("off"/"repo"/"archive"/"data"; default: "off") - see
+        #       checkBorg().
         backendBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="backendBorg"
         backendBorg_repo="$1"
@@ -359,6 +448,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         backendBorg_intervallabel="$7"
         backendBorg_encryption="${8:-repokey}"
         backendBorg_repotype="${9:-borg}"
+        backendBorg_verifydepth="${10:-off}"
 
         if [ "$backendBorg_repotype" = "borgbase" ]; then
             ensureBorgBaseInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
@@ -377,6 +467,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
         msg "DEBUG" "Repo is: $backendBorg_repo "
         pruneBorg "$backendBorg_repo" "$backendBorg_pruneopts" "$backendBorg_intervallabel" "$backendBorg_remotecmd"
+        checkBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_verifydepth"
 
         LASTFUNC="$backendBorg_CALLINGFUCNTION"
         unset backendBorg_CALLINGFUCNTION
@@ -389,6 +480,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset backendBorg_intervallabel
         unset backendBorg_encryption
         unset backendBorg_repotype
+        unset backendBorg_verifydepth
         return 0
     }
 

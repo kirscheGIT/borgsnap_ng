@@ -130,6 +130,41 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             msg "INFO" "LOCAL_READABLE_BY_OTHERS set to $LOCAL_READABLE_BY_OTHERS"
         fi
 
+        # BORG_VERIFY: optional, per-interval "borg check" depth, e.g.
+        # "daily:off;weekly:repo;monthly:data". Unset/empty means no
+        # verification at all for every interval - preserves existing
+        # behavior for every config that predates this feature. Validated
+        # here (not silently ignored later) so a typo'd depth is caught at
+        # config load time, not discovered months later when a scheduled
+        # check never actually ran.
+        if [ "${BORG_VERIFY:-}" = "" ]; then
+            export BORG_VERIFY=""
+            msg "INFO" "BORG_VERIFY not configured, defaulting to no verification"
+        else
+            export BORG_VERIFY
+            msg "INFO" "BORG_VERIFY set to $BORG_VERIFY"
+            lconfigfile_verify_OLD_IFS="$IFS"
+            IFS=';'
+            for lconfigfile_verify_entry in $BORG_VERIFY; do
+                lconfigfile_verify_depth="${lconfigfile_verify_entry#*:}"
+                case "$lconfigfile_verify_depth" in
+                    off|repo|archive|data) ;;
+                    *)
+                        lconfigfile_verify_msg="BORG_VERIFY: invalid depth '$lconfigfile_verify_depth' in entry '$lconfigfile_verify_entry' - must be one of: off, repo, archive, data" # noqa:unset
+                        IFS="$lconfigfile_verify_OLD_IFS"
+                        unset lconfigfile_verify_OLD_IFS
+                        unset lconfigfile_verify_entry
+                        unset lconfigfile_verify_depth
+                        die "$lconfigfile_verify_msg"
+                        ;;
+                esac
+            done
+            IFS="$lconfigfile_verify_OLD_IFS"
+            unset lconfigfile_verify_OLD_IFS
+            unset lconfigfile_verify_entry
+            unset lconfigfile_verify_depth
+        fi
+
         if [ "$COMPRESS" = "" ]; then
             export COMPRESS="zstd,8"
             msg "INFO" "COMPRESS not configured, defaulting to zstd,8"
