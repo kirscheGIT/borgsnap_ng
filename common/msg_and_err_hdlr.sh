@@ -130,6 +130,19 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         }
 
          die() {
+            # FIX #53: mirror err_hdlr's cleanup - without this, a die()
+            # call firing after a successful mount (e.g. any of this
+            # project's own config-validation messages, or a genuinely
+            # unexpected failure past that point) leaves the mount stuck
+            # indefinitely. Nothing else ever cleans it up: the manifest
+            # is per-run, so a LATER run has no way to know about a mount
+            # a DIFFERENT, already-exited process left behind - it just
+            # silently blocks every future mount at that same path with
+            # "directory is not empty" until someone notices and manually
+            # unmounts it.
+            if [ "${LASTFUNC:-}" != "unmountZFSSnapshot" ] && [ -n "${MOUNT_BORG_BASE_DIR:-}" ]; then
+                umountZFSSnapshot "$MOUNT_BORG_BASE_DIR" 2>/dev/null
+            fi
             echo "$0: $*" >&2
             exit 1
         }

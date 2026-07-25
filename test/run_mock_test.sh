@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.17
+# TESTKIT_VERSION=2026-07-20.18
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -274,11 +274,14 @@ assert "FIX43: bookmark still exists (recreated), pointing at the new snapshot" 
 # fail with the specific, actionable message, not silently re-send
 # everything or corrupt the target.
 zfs destroy "tank/data#zfssend-tank_zfssendtarget"
+: > "$MOCK_LOG"
 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend3.log" 2>&1
 RC_ZFSSEND3=$?
 assert "FIX43: target exists but bookmark missing -> run fails" "[ $RC_ZFSSEND3 -ne 0 ]"
 assert "FIX43: missing-bookmark run gives the specific actionable message" \
   "grep -q 'tracking bookmark' '$WORKDIR3/run_zfssend3.log' && grep -q 'is missing' '$WORKDIR3/run_zfssend3.log'"
+assert "FIX53: die() cleans up the mount that happened before it fired, not just err_hdlr" \
+  "grep -q 'umount ' '$MOCK_LOG'"
 
 # Fault injection on both sides of the send|receive pipe - this is the
 # whole point of the dual-tempfile exit-code pattern (see the comment in
