@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.23
+# TESTKIT_VERSION=2026-07-20.24
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -293,12 +293,20 @@ assert "FIX53: die() cleans up the mount that happened before it fired, not just
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_ZFS_FAIL_SEND=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_sendfail.log" 2>&1
 RC_SENDFAIL=$?
-assert "FIX42: a failing zfs send aborts the run" "[ $RC_SENDFAIL -ne 0 ]"
+# FIX #59: a failing send no longer aborts the whole run - it's reported
+# loudly and the dispatch loop continues, matching FIX #36's "one
+# destination's problem doesn't block the others" philosophy (this
+# config only has the one zfssend repo, so the overall run now succeeds).
+assert "FIX59: a failing zfs send is reported but does not abort the run" "[ $RC_SENDFAIL -eq 0 ]"
+assert "FIX59: the send failure is clearly logged" \
+  "grep -q 'zfssend: send failed' '$WORKDIR3/run_zfssend_sendfail.log'"
 
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_ZFS_FAIL_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_recvfail.log" 2>&1
 RC_RECVFAIL=$?
-assert "FIX42: a failing zfs receive aborts the run" "[ $RC_RECVFAIL -ne 0 ]"
+assert "FIX59: a failing zfs receive is reported but does not abort the run" "[ $RC_RECVFAIL -eq 0 ]"
+assert "FIX59: the receive failure is clearly logged" \
+  "grep -q 'zfssend: receive failed' '$WORKDIR3/run_zfssend_recvfail.log'"
 
 # FIX #43: a failing bookmark creation (after a successful send/receive)
 # must also abort the run, not silently leave the target without a usable
@@ -321,7 +329,12 @@ echo "-------------------------------------"
 # failure.
 MOCK_ZFS_INTERRUPT_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_interrupt1.log" 2>&1
 RC_INTERRUPT1=$?
-assert "FIX44: an interrupted send fails the run" "[ $RC_INTERRUPT1 -ne 0 ]"
+# FIX #59: an interrupted send is now reported and gracefully skipped
+# rather than aborting the whole run (this config only has the one
+# zfssend repo, so the overall run succeeds) - the resume token still
+# gets left behind exactly as before, so the next run picks up the resume
+# normally.
+assert "FIX59: an interrupted send is reported but does not abort the run" "[ $RC_INTERRUPT1 -eq 0 ]"
 assert "FIX44: a resume token is left behind after interruption" \
   "grep -q '^tank/zfssendtarget/tank/data::resume::' '$MOCK_STATE'"
 
@@ -347,7 +360,7 @@ assert "FIX44: bookmark exists, pointing at the resumed (originally interrupted)
 MOCK_ZFS_INTERRUPT_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > /dev/null 2>&1
 MOCK_ZFS_INTERRUPT_RECEIVE=1 sh ./borgsnap_ng.sh run "$WORKDIR3/test3-zfssend.conf" > "$WORKDIR3/run_zfssend_doubleinterrupt.log" 2>&1
 RC_DOUBLEINTERRUPT=$?
-assert "FIX44: a second interruption during resume also fails the run" "[ $RC_DOUBLEINTERRUPT -ne 0 ]"
+assert "FIX59: a second interruption during resume is reported but does not abort the run" "[ $RC_DOUBLEINTERRUPT -eq 0 ]"
 assert "FIX44: resume token survives a repeated interruption (not lost)" \
   "grep -q '^tank/zfssendtarget/tank/data::resume::' '$MOCK_STATE'"
 
@@ -1154,6 +1167,49 @@ assert "FIX58: exhausts all retries - exactly 3 attempts were made, not more, no
   "[ \"\$(cat '$WORKDIR14/ssh_ls_counter')\" = 3 ]"
 assert "FIX58: exhausts all retries - falls through to a fresh init" \
   "grep -q '^borg init' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "zfssend failure resilience across mixed repos (FIX #59)"
+echo "-------------------------------------"
+
+# Reproduces a real-world scenario: REPOLIST has a borg repo, then a
+# zfssend target that fails, then ANOTHER borg repo after it. Before this
+# fix, backendZfsSend called err_hdlr directly on a send/receive failure -
+# completely bypassing the FIX #36/#57 carve-out mechanism - so the whole
+# run died right there, and the SECOND borg repo (which has nothing to do
+# with the failing zfssend target) never got a chance to run at all.
+WORKDIR15="$(mktemp -d)"
+mkdir -p "$WORKDIR15/repo_before" "$WORKDIR15/repo_after"
+MAILKEYFILE15="$WORKDIR15/test15.key"; echo "testpassphrase" > "$MAILKEYFILE15"; chmod 600 "$MAILKEYFILE15"
+cat > "$WORKDIR15/test15-mixed.conf" << EOF24
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE15"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR15/repo_before, ; zfssend:tank/mixedtarget, ; $WORKDIR15/repo_after, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF24
+chmod 600 "$WORKDIR15/test15-mixed.conf"
+
+export MOCK_LOG="$WORKDIR15/mock.log"
+export MOCK_STATE="$WORKDIR15/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR15/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_FAIL_SEND=1 sh ./borgsnap_ng.sh run "$WORKDIR15/test15-mixed.conf" > "$WORKDIR15/run_mixed.log" 2>&1
+RC_MIXED59=$?
+assert "FIX59: run succeeds overall despite the zfssend target in the middle failing" "[ $RC_MIXED59 -eq 0 ]"
+assert "FIX59: the repo BEFORE the failing zfssend target got backed up" \
+  "grep -q \"borg create.*$WORKDIR15/repo_before\" '$MOCK_LOG'"
+assert "FIX59: the repo AFTER the failing zfssend target ALSO got backed up (the actual bug reported)" \
+  "grep -q \"borg create.*$WORKDIR15/repo_after\" '$MOCK_LOG'"
+assert "FIX59: the zfssend failure itself is still clearly logged" \
+  "grep -q 'zfssend: send failed' '$WORKDIR15/run_mixed.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

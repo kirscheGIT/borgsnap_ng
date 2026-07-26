@@ -275,13 +275,27 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         unset bckndZfsSend_remotecmd
 
         # NOTE: LASTFUNC is deliberately NOT restored to the caller before
-        # these err_hdlr calls (fixing a latent bug from step 1, where it
-        # was restored too early and would have misattributed the failure
-        # to the wrong function in the error log). A failed resume leaves
-        # the resume token in place (the mock and real zfs both do this
-        # automatically - the token is only cleared on a successful
-        # receive), so the next run will simply try to resume again.
+        # building these ERROR messages (matching the die-message pattern
+        # used throughout this file) - restoring it too early would
+        # misattribute the failure to the wrong function in the log. A
+        # failed resume leaves the resume token in place (the mock and
+        # real zfs both do this automatically - the token is only cleared
+        # on a successful receive), so the next run will simply try to
+        # resume again.
         if [ "$bckndZfsSend_sendrc" -ne 0 ]; then
+            # FIX #59: log loudly and return instead of calling err_hdlr
+            # directly (which always aborts the whole process, bypassing
+            # exec_cmd's FIX #36/#57 carve-out mechanism entirely, since
+            # it's called here directly rather than through exec_cmd). One
+            # zfssend target failing (e.g. a stale/mismatched incremental
+            # base) must not abort backups to every OTHER configured repo
+            # that comes after it in REPOLIST - the dispatch loop in
+            # bckp_hdlr.sh already runs under "set +e" and doesn't check
+            # our return value, so returning here lets it continue
+            # normally to the next repo.
+            msg "ERROR" "zfssend: send failed (exit $bckndZfsSend_sendrc) for $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset - skipping this target, continuing with remaining repos"
+            LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
+            unset bckndZfsSend_CALLINGFUCNTION
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
             unset bckndZfsSend_targetdataset
@@ -291,9 +305,12 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_recvrc
             unset bckndZfsSend_pool
             unset bckndZfsSend_pool_imported_by_us
-            err_hdlr "$bckndZfsSend_sendrc"
+            return 1
         fi
         if [ "$bckndZfsSend_recvrc" -ne 0 ]; then
+            msg "ERROR" "zfssend: receive failed (exit $bckndZfsSend_recvrc) for $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset - skipping this target, continuing with remaining repos"
+            LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
+            unset bckndZfsSend_CALLINGFUCNTION
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
             unset bckndZfsSend_targetdataset
@@ -302,7 +319,7 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_keepduration
             unset bckndZfsSend_pool
             unset bckndZfsSend_pool_imported_by_us
-            err_hdlr "$bckndZfsSend_recvrc"
+            return 1
         fi
 
         # FIX #44: for a resumed transfer, the label that actually landed
