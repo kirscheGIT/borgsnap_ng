@@ -35,6 +35,9 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      is used for all of them!
         # $3 - optional - encryption mode for "borg init --encryption=..."
         #      (default: repokey, preserving prior hardcoded behavior)
+        # Returns 0 if every repo in the list was successfully
+        # initialized, nonzero if any failed - see the FIX #57 comment
+        # below for why the caller needs to know this.
 
         initBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="initBorg"
@@ -46,6 +49,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         
         initBorg_remotepath=""
         initBorg_cmdline=""
+        initBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$initBorg_borgpath" ]; then
             msg "borgpath set"
@@ -61,12 +65,24 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 msg "DEBUG" "Initialize Remote path"
                 initBorg_cmdline="borg init --encryption=$initBorg_encryption --show-rc "$initBorg_remotepath" "$i""
                 msg "DEBUG" "Init Borg cmdline is $initBorg_cmdline"
-                #exec_cmd borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i"
                 exec_cmd eval "$initBorg_cmdline"  
-                #set -e
             else
                 exec_cmd borg init --encryption="$initBorg_encryption" --show-rc "$i"  
-                #set -e
+            fi
+            initBorg_rc=$?
+            if [ "$initBorg_rc" -ne 0 ]; then
+                # FIX #57: exec_cmd intentionally skips err_hdlr when
+                # LASTFUNC=="initBorg" (mirroring the FIX #36 carve-out
+                # for createBorg) - a single repo failing to initialize
+                # (transient network hiccup, unreachable remote, etc.)
+                # must not abort backups to every OTHER configured repo.
+                # Surface it loudly, continue this loop, and report
+                # failure via our own return value - backendBorg checks
+                # that and skips create/prune/check for just this one
+                # repo, letting the dispatch loop move on to the next
+                # configured repo as originally intended.
+                msg "ERROR" "borg init failed (exit $initBorg_rc) for repo $i - skipping this repo, continuing with remaining repos"
+                initBorg_failed=1 # noqa:unset - see the initial assignment above
             fi
         done
         LASTFUNC="$initBorg_CALLINGFUCNTION"
@@ -78,7 +94,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset initBorg_remotepath
         unset initBorg_pathlist
         unset initBorg_encryption
-        return 0
+        unset initBorg_rc
+        return "$initBorg_failed"
     }
 
     createBorg(){
@@ -457,7 +474,28 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 msg "INFO" "Creating repo directory: $backendBorg_repo"
                 dircreate "$backendBorg_repo"
                 msg "INFO" "Init Borg repo: $backendBorg_repo"
-                initBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+                if ! initBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"; then
+                    # FIX #57: initBorg already logged the failure loudly
+                    # and returned nonzero - this repo isn't usable this
+                    # run (createBorg/pruneBorg/checkBorg would just
+                    # cascade into more failures against a never-
+                    # initialized repo). Skip it, but let the dispatch
+                    # loop in bckp_hdlr.sh continue normally to the next
+                    # configured repo, matching FIX #36's philosophy.
+                    LASTFUNC="$backendBorg_CALLINGFUCNTION"
+                    unset backendBorg_CALLINGFUCNTION
+                    unset backendBorg_repo
+                    unset backendBorg_remotecmd
+                    unset backendBorg_label
+                    unset backendBorg_createopts
+                    unset backendBorg_srcpath
+                    unset backendBorg_pruneopts
+                    unset backendBorg_intervallabel
+                    unset backendBorg_encryption
+                    unset backendBorg_repotype
+                    unset backendBorg_verifydepth
+                    return 0
+                fi
             fi
         fi
 

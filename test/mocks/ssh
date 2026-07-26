@@ -1,0 +1,35 @@
+#!/bin/sh
+# TESTKIT_VERSION=2026-07-20.23
+# Mock ssh, used by direxists()/dircreate() for ssh:// repo paths.
+# Usage as invoked by our code: ssh <host> <command...>
+#
+# Fault injection (unset/empty = normal behavior):
+#   MOCK_SSH_FAIL_COUNT=N   the first N "ssh host ls ..." calls fail with a
+#     transient-looking error (exit 255), then subsequent calls succeed.
+#     Used to test FIX #58's retry logic. Counted via a small counter file
+#     (MOCK_SSH_COUNTER_FILE, defaults next to MOCK_LOG) since each
+#     invocation is a fresh process with no memory of prior calls.
+: "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
+echo "ssh $*" >> "$MOCK_LOG"
+
+host="$1"
+shift
+
+case "$1" in
+  ls)
+    if [ -n "${MOCK_SSH_FAIL_COUNT:-}" ] && [ "$MOCK_SSH_FAIL_COUNT" -gt 0 ]; then
+      counterfile="${MOCK_SSH_COUNTER_FILE:-$(dirname "$MOCK_LOG")/ssh_ls_counter}"
+      count=$(cat "$counterfile" 2>/dev/null || echo 0)
+      count=$((count + 1))
+      echo "$count" > "$counterfile"
+      if [ "$count" -le "$MOCK_SSH_FAIL_COUNT" ]; then
+        echo "ssh: connect to host $host port 22: Connection timed out (mock fault injection, attempt $count)" >&2
+        exit 255
+      fi
+    fi
+    exit 0 ;;
+  mkdir)
+    exit 0 ;;
+  *)
+    exit 0 ;;
+esac

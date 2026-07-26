@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.22
+# TESTKIT_VERSION=2026-07-20.23
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
@@ -13,12 +13,25 @@
 #   MOCK_BORG_CHECK_RC=<code>   any "borg check" call exits with this code
 #     instead of 0. Used to simulate a real "borg check" finding a
 #     problem, for testing BORG_VERIFY's warn-not-die handling.
+#   MOCK_BORG_FAIL_INIT_REPO=/path/to/repo   "borg init" targeting that
+#     repo (matched as a substring of the repo argument) fails with exit
+#     1. Used to verify FIX #57 (a failing init for one repo must be
+#     reported, but must not abort backups to the other configured repos).
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 echo "borg $*" >> "$MOCK_LOG"
 if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
   for arg in "$@"; do
     case "$arg" in
       "${MOCK_BORG_FAIL_CREATE_REPO}"*)
+        echo "$arg: Permission denied (mock fault injection)" >&2
+        exit 1 ;;
+    esac
+  done
+fi
+if [ "$1" = "init" ] && [ -n "${MOCK_BORG_FAIL_INIT_REPO:-}" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      "${MOCK_BORG_FAIL_INIT_REPO}"*)
         echo "$arg: Permission denied (mock fault injection)" >&2
         exit 1 ;;
     esac

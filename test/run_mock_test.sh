@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.22
+# TESTKIT_VERSION=2026-07-20.23
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -29,7 +29,7 @@ BACKUP_DIR="$WORKDIR/path-backup"
 mkdir -p "$BACKUP_DIR"
 
 cleanup_mocks() {
-  for b in zfs zpool borg mount umount sudo date sendmail; do
+  for b in zfs zpool borg mount umount sudo date sendmail ssh; do
     if [ -e "$BACKUP_DIR/$b" ] || [ -L "$BACKUP_DIR/$b" ]; then
       mv "$BACKUP_DIR/$b" "/usr/local/bin/$b"
     else
@@ -39,7 +39,7 @@ cleanup_mocks() {
 }
 trap cleanup_mocks EXIT INT TERM HUP
 
-for b in zfs zpool borg mount umount sudo date sendmail; do
+for b in zfs zpool borg mount umount sudo date sendmail ssh; do
   if [ -e "/usr/local/bin/$b" ] || [ -L "/usr/local/bin/$b" ]; then
     mv "/usr/local/bin/$b" "$BACKUP_DIR/$b"
   fi
@@ -1054,6 +1054,106 @@ RC_INVALID=$?
 assert "BORG_VERIFY: an invalid depth value is rejected, not silently ignored" "[ $RC_INVALID -ne 0 ]"
 assert "BORG_VERIFY: the rejection message names the actual problem" \
   "grep -q \"invalid depth 'thorough'\" '$WORKDIR12/run_invalid.log'"
+
+echo "-------------------------------------"
+echo "initBorg resilience across multiple repos (FIX #57)"
+echo "-------------------------------------"
+
+# One repo's init fails (transient issue, unreachable remote, etc.) - must
+# be reported loudly, but must not abort backups to the other configured
+# repo, matching FIX #36's philosophy for createBorg.
+WORKDIR13="$(mktemp -d)"
+MAILKEYFILE13="$WORKDIR13/test13.key"; echo "testpassphrase" > "$MAILKEYFILE13"; chmod 600 "$MAILKEYFILE13"
+cat > "$WORKDIR13/test13-initfail.conf" << EOF22
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE13"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR13/repo_fail, ; $WORKDIR13/repo_ok, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF22
+chmod 600 "$WORKDIR13/test13-initfail.conf"
+
+export MOCK_LOG="$WORKDIR13/mock.log"
+export MOCK_STATE="$WORKDIR13/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR13/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_FAIL_INIT_REPO="$WORKDIR13/repo_fail" sh ./borgsnap_ng.sh run "$WORKDIR13/test13-initfail.conf" > "$WORKDIR13/run_initfail.log" 2>&1
+RC_INITFAIL=$?
+assert "FIX57: run still succeeds overall when one repo's init fails" "[ $RC_INITFAIL -eq 0 ]"
+assert "FIX57: the init failure is reported loudly" \
+  "grep -q 'borg init failed' '$WORKDIR13/run_initfail.log'"
+assert "FIX57: the OTHER repo still received a create attempt" \
+  "grep -q \"borg create.*$WORKDIR13/repo_ok\" '$MOCK_LOG'"
+assert "FIX57: no create was attempted against the failed repo (never initialized)" \
+  "! grep -q \"borg create.*$WORKDIR13/repo_fail\" '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "Remote existence check retry (FIX #58)"
+echo "-------------------------------------"
+
+WORKDIR14="$(mktemp -d)"
+MAILKEYFILE14="$WORKDIR14/test14.key"; echo "testpassphrase" > "$MAILKEYFILE14"; chmod 600 "$MAILKEYFILE14"
+cat > "$WORKDIR14/test14-remote.conf" << EOF23
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE14"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="ssh://mocksshhost/./test_repo, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF23
+chmod 600 "$WORKDIR14/test14-remote.conf"
+
+export MOCK_LOG="$WORKDIR14/mock.log"
+export MOCK_STATE="$WORKDIR14/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR14/lock"
+
+# Scenario A: succeeds on the very first attempt - no retry, no warning.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+rm -f "$WORKDIR14/ssh_ls_counter"
+MOCK_SSH_COUNTER_FILE="$WORKDIR14/ssh_ls_counter" sh ./borgsnap_ng.sh run "$WORKDIR14/test14-remote.conf" > "$WORKDIR14/run_immediate.log" 2>&1
+RC_IMMEDIATE=$?
+assert "FIX58: immediate success - run succeeds" "[ $RC_IMMEDIATE -eq 0 ]"
+assert "FIX58: immediate success - no retry warning logged" \
+  "! grep -q 'retrying shortly' '$WORKDIR14/run_immediate.log'"
+
+# Scenario B: fails once, then succeeds on retry - repo correctly detected
+# as already existing, init skipped, and the retry is visibly logged.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+rm -f "$WORKDIR14/ssh_ls_counter"
+MOCK_SSH_COUNTER_FILE="$WORKDIR14/ssh_ls_counter" MOCK_SSH_FAIL_COUNT=1 sh ./borgsnap_ng.sh run "$WORKDIR14/test14-remote.conf" > "$WORKDIR14/run_retry.log" 2>&1
+RC_RETRY=$?
+assert "FIX58: fails once then succeeds - run still succeeds" "[ $RC_RETRY -eq 0 ]"
+assert "FIX58: fails once then succeeds - the retry is logged" \
+  "grep -q 'retrying shortly' '$WORKDIR14/run_retry.log'"
+assert "FIX58: fails once then succeeds - repo correctly detected as existing (no init attempted)" \
+  "! grep -q '^borg init' '$MOCK_LOG'"
+
+# Scenario C: fails every attempt (more than the retry budget) - correctly
+# concludes "doesn't exist" after exhausting retries, proceeds to init a
+# fresh repo (not stuck, not a false "doesn't exist" masking a real one -
+# this is the genuine "repo really isn't there yet" case).
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+rm -f "$WORKDIR14/ssh_ls_counter"
+MOCK_SSH_COUNTER_FILE="$WORKDIR14/ssh_ls_counter" MOCK_SSH_FAIL_COUNT=5 sh ./borgsnap_ng.sh run "$WORKDIR14/test14-remote.conf" > "$WORKDIR14/run_exhausted.log" 2>&1
+RC_EXHAUSTED=$?
+assert "FIX58: exhausts all retries - run still succeeds (falls through to a fresh init)" "[ $RC_EXHAUSTED -eq 0 ]"
+assert "FIX58: exhausts all retries - exactly 3 attempts were made, not more, not fewer" \
+  "[ \"\$(cat '$WORKDIR14/ssh_ls_counter')\" = 3 ]"
+assert "FIX58: exhausts all retries - falls through to a fresh init" \
+  "grep -q '^borg init' '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
