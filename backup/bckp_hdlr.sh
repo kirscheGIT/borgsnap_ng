@@ -165,9 +165,16 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # BORG_VERIFY: look up this interval's configured "borg check"
             # depth once, here - not per repo below, since it depends only
             # on the interval (e.g. "monthly"), not on which repo is being
-            # backed up to. Defaults to "off" if BORG_VERIFY is unset, or
-            # this specific interval has no entry in it.
-            strtBckpMchn_verifydepth="off"
+            # backed up to. An exact interval match always wins; a
+            # "default:" entry (if present) is the fallback for any
+            # interval that isn't listed explicitly - without this, adding
+            # a new interval to RETENTIONPERIOD (e.g. "hourly") without
+            # also remembering to update BORG_VERIFY would silently turn
+            # verification off for it, with no warning at all. Falls back
+            # to "off" only if BORG_VERIFY is unset entirely, or has
+            # neither an exact match nor a "default:" entry.
+            strtBckpMchn_verifydepth=""
+            strtBckpMchn_verifydefault="off"
             if [ -n "${BORG_VERIFY:-}" ]; then
                 strtBckpMchn_verify_OLD_IFS="$IFS"
                 IFS=';'
@@ -177,6 +184,9 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         "${strtBckpMchn_label%-*}:"*)
                             strtBckpMchn_verifydepth="${strtBckpMchn_verify_entry#*:}"
                             ;;
+                        "default:"*)
+                            strtBckpMchn_verifydefault="${strtBckpMchn_verify_entry#*:}"
+                            ;;
                     esac
                     IFS=';'
                 done
@@ -184,6 +194,10 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 unset strtBckpMchn_verify_OLD_IFS
                 unset strtBckpMchn_verify_entry
             fi
+            if [ -z "$strtBckpMchn_verifydepth" ]; then
+                strtBckpMchn_verifydepth="$strtBckpMchn_verifydefault"
+            fi
+            unset strtBckpMchn_verifydefault
 
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
                 strtBckpMchn_repospec=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace

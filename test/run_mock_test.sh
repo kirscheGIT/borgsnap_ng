@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.24
+# TESTKIT_VERSION=2026-07-20.25
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1067,6 +1067,84 @@ RC_INVALID=$?
 assert "BORG_VERIFY: an invalid depth value is rejected, not silently ignored" "[ $RC_INVALID -ne 0 ]"
 assert "BORG_VERIFY: the rejection message names the actual problem" \
   "grep -q \"invalid depth 'thorough'\" '$WORKDIR12/run_invalid.log'"
+
+# Scenario H: only a "default:" entry, no exact interval match at all -
+# still applies, instead of silently falling back to "off".
+cat > "$WORKDIR12/test12-defaultonly.conf" << EOF25
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="default:repo"
+EOF25
+chmod 600 "$WORKDIR12/test12-defaultonly.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-defaultonly.conf" > "$WORKDIR12/run_defaultonly.log" 2>&1
+RC_DEFAULTONLY=$?
+assert "BORG_VERIFY: a bare 'default:' entry applies when nothing more specific matches" "[ $RC_DEFAULTONLY -eq 0 ]"
+assert "BORG_VERIFY: the default depth was actually used" \
+  "grep -q '^borg check --repository-only' '$MOCK_LOG'"
+
+# Scenario I: an exact interval match must win over "default:", not the
+# other way around, regardless of which order they appear in the string.
+cat > "$WORKDIR12/test12-defaultplusexact.conf" << EOF26
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="default:repo;${ACTUAL_INTERVAL}:data"
+EOF26
+chmod 600 "$WORKDIR12/test12-defaultplusexact.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-defaultplusexact.conf" > "$WORKDIR12/run_defaultplusexact.log" 2>&1
+RC_DEFAULTPLUSEXACT=$?
+assert "BORG_VERIFY: exact match plus default - run succeeds" "[ $RC_DEFAULTPLUSEXACT -eq 0 ]"
+assert "BORG_VERIFY: the EXACT interval match wins over 'default:', not the other way around" \
+  "grep -q '^borg check --verify-data' '$MOCK_LOG' && ! grep -q '^borg check --repository-only' '$MOCK_LOG'"
+
+# Scenario J: an interval with no exact match falls back to "default:",
+# even though OTHER intervals ARE listed explicitly - the real-world case
+# this was built for: adding a new interval to RETENTIONPERIOD without
+# remembering to also add it to BORG_VERIFY must not silently disable
+# verification for it.
+cat > "$WORKDIR12/test12-fallback.conf" << EOF27
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE12"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR12/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="default:archive;some_interval_that_never_matches:data"
+EOF27
+chmod 600 "$WORKDIR12/test12-fallback.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR12/test12-fallback.conf" > "$WORKDIR12/run_fallback.log" 2>&1
+RC_FALLBACK=$?
+assert "BORG_VERIFY: an interval not explicitly listed falls back to 'default:' instead of silently going off" "[ $RC_FALLBACK -eq 0 ]"
+assert "BORG_VERIFY: the fallback depth was actually used" \
+  "grep -q '^borg check --archives-only' '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "initBorg resilience across multiple repos (FIX #57)"
