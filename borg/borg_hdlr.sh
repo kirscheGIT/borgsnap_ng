@@ -432,6 +432,84 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         return 0
     }
 
+    checkRestoreBorg(){
+        # RESTORE_VERIFY: proves the actual RESTORE PATH works
+        # (extraction, decryption, permissions) - something BORG_VERIFY's
+        # --verify-data can never show, since it only proves the stored
+        # bytes are intact, not that getting them back out actually
+        # works. Reads back the canary file startBackupMachine wrote into
+        # the live dataset (and therefore into THIS run's own snapshot,
+        # and therefore into the archive just created) and compares its
+        # hash - a mismatch means the restore path is broken for this
+        # specific repo, which is a genuine FAILURE, not a warning (see
+        # the RESTOREVERIFY_FAILED comment in bckp_hdlr.sh for why).
+        #
+        # $1 - mandatory repo path
+        # $2 - optional borg remote command
+        # $3 - mandatory archive name (this run's own archive - not
+        #      "latest", so this checks exactly what was just backed up)
+        checkRestoreBorg_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkRestoreBorg"
+        checkRestoreBorg_repo="$1"
+        checkRestoreBorg_remotecmd="$2"
+        checkRestoreBorg_archive="$3"
+
+        if [ "${RESTOREVERIFY_ACTIVE:-off}" != "on" ]; then
+            LASTFUNC="$checkRestoreBorg_CALLINGFUCNTION"
+            unset checkRestoreBorg_CALLINGFUCNTION
+            unset checkRestoreBorg_repo
+            unset checkRestoreBorg_remotecmd
+            unset checkRestoreBorg_archive
+            return 0
+        fi
+
+        if [ -n "$checkRestoreBorg_remotecmd" ]; then
+            checkRestoreBorg_remotepath="--remote-path=${checkRestoreBorg_remotecmd}"
+        else
+            checkRestoreBorg_remotepath="--remote-path=borg"
+        fi
+
+        msg "DEBUG" "--------------------------- CHECK RESTORE (borg) -----------------------------------"
+        msg "DEBUG" "Repo is: $checkRestoreBorg_repo, archive: $checkRestoreBorg_archive"
+
+        if [ "${checkRestoreBorg_repo#ssh://}" != "$checkRestoreBorg_repo" ]; then
+            checkRestoreBorg_cmdline="borg extract --stdout $checkRestoreBorg_remotepath \"${checkRestoreBorg_repo}::${checkRestoreBorg_archive}\" \"$RESTOREVERIFY_CANARY_ARCHIVEPATH\""
+        else
+            checkRestoreBorg_cmdline="borg extract --stdout \"${checkRestoreBorg_repo}::${checkRestoreBorg_archive}\" \"$RESTOREVERIFY_CANARY_ARCHIVEPATH\""
+        fi
+        msg "DEBUG" "Restore-check cmdline: $checkRestoreBorg_cmdline"
+
+        checkRestoreBorg_scratchfile=$(mktemp)
+        eval "$checkRestoreBorg_cmdline" > "$checkRestoreBorg_scratchfile" 2>/dev/null
+        checkRestoreBorg_extractrc=$?
+
+        if [ "$checkRestoreBorg_extractrc" -ne 0 ]; then
+            msg "ERROR" "restore verification FAILED for repo '$checkRestoreBorg_repo' (archive $checkRestoreBorg_archive) - could not extract the canary file (exit $checkRestoreBorg_extractrc). The restore path itself may be broken for this repo."
+            RESTOREVERIFY_FAILED=1
+        else
+            checkRestoreBorg_actualhash=$(sha256sum "$checkRestoreBorg_scratchfile" 2>/dev/null | cut -d' ' -f1)
+            if [ "$checkRestoreBorg_actualhash" != "$RESTOREVERIFY_CANARY_HASH" ]; then
+                msg "ERROR" "restore verification FAILED for repo '$checkRestoreBorg_repo' (archive $checkRestoreBorg_archive) - canary content mismatch after extraction (expected $RESTOREVERIFY_CANARY_HASH, got $checkRestoreBorg_actualhash). The restore path may be corrupting or truncating data."
+                RESTOREVERIFY_FAILED=1
+            else
+                msg "INFO" "restore verification passed for repo '$checkRestoreBorg_repo' (archive $checkRestoreBorg_archive)"
+            fi
+            unset checkRestoreBorg_actualhash
+        fi
+        rm -f "$checkRestoreBorg_scratchfile"
+        unset checkRestoreBorg_scratchfile
+        unset checkRestoreBorg_extractrc
+
+        LASTFUNC="$checkRestoreBorg_CALLINGFUCNTION"
+        unset checkRestoreBorg_CALLINGFUCNTION
+        unset checkRestoreBorg_repo
+        unset checkRestoreBorg_remotecmd
+        unset checkRestoreBorg_archive
+        unset checkRestoreBorg_remotepath
+        unset checkRestoreBorg_cmdline
+        return 0
+    }
+
     backendBorg(){
         # FIX #41: backend wrapper called from startBackupMachine's repo
         # dispatch (see backup/bckp_hdlr.sh). Bundles the existing
@@ -506,6 +584,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "Repo is: $backendBorg_repo "
         pruneBorg "$backendBorg_repo" "$backendBorg_pruneopts" "$backendBorg_intervallabel" "$backendBorg_remotecmd"
         checkBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_verifydepth"
+        checkRestoreBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_label"
 
         LASTFUNC="$backendBorg_CALLINGFUCNTION"
         unset backendBorg_CALLINGFUCNTION

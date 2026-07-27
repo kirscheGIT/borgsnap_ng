@@ -41,6 +41,19 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         strtBckpMchn_recursive=""
         strtBckpMchn_borgremotecommand=""
 
+        # RESTORE_VERIFY: tracks whether ANY restore-verification check
+        # failed anywhere in this run (any dataset, any repo) - checked at
+        # the very end of this function to decide the final return value.
+        # Unlike BORG_VERIFY (a WARNING that doesn't affect the exit
+        # code), a failed restore verification is a genuine FAILURE by
+        # design - it means the actual restore path is broken, which is
+        # more serious than "an old archive might have a corrupted byte
+        # somewhere". One repo's restore-check failing still doesn't stop
+        # OTHER repos from getting their own backup/check this run (same
+        # resilience philosophy as FIX #36/#57/#59) - it just means the
+        # overall run is reported as failed once everything else is done.
+        export RESTOREVERIFY_FAILED=""
+
         if [ -z "$strtBckpMchn_borgrepoopts" ]; then
             strtBckpMchn_borgrepoopts="--info --stats --compression=auto,zstd,9 --files-cache=ctime,size,inode --show-rc"
         fi
@@ -135,6 +148,85 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
             done
             # [ ] TODO #4 Pre and post scripts for the snapshots
+
+            # RESTORE_VERIFY: determine on/off for today's interval, same
+            # default: fallback mechanism as BORG_VERIFY. Must happen HERE
+            # - before the snapshot below - because if enabled, a fresh
+            # canary file needs to be written into the LIVE dataset first,
+            # so it gets captured by today's snapshot.
+            strtBckpMchn_restoreverify=""
+            strtBckpMchn_restoreverifydefault="off"
+            if [ -n "${RESTORE_VERIFY:-}" ]; then
+                strtBckpMchn_rverify_OLD_IFS="$IFS"
+                IFS=';'
+                for strtBckpMchn_rverify_entry in $RESTORE_VERIFY; do
+                    IFS=' '
+                    case "$strtBckpMchn_rverify_entry" in
+                        "${strtBckpMchn_label%-*}:"*)
+                            strtBckpMchn_restoreverify="${strtBckpMchn_rverify_entry#*:}"
+                            ;;
+                        "default:"*)
+                            strtBckpMchn_restoreverifydefault="${strtBckpMchn_rverify_entry#*:}"
+                            ;;
+                    esac
+                    IFS=';'
+                done
+                IFS="$strtBckpMchn_rverify_OLD_IFS"
+                unset strtBckpMchn_rverify_OLD_IFS
+                unset strtBckpMchn_rverify_entry
+            fi
+            if [ -z "$strtBckpMchn_restoreverify" ]; then
+                strtBckpMchn_restoreverify="$strtBckpMchn_restoreverifydefault"
+            fi
+            unset strtBckpMchn_restoreverifydefault
+
+            export RESTOREVERIFY_ACTIVE="off"
+            export RESTOREVERIFY_CANARY_HASH=""
+            # Path of the canary file exactly as it will appear inside a
+            # borg archive: borg records paths as given at creation time
+            # (the mounted snapshot dir, e.g. "/run/borgsnap/<dataset>"),
+            # with the leading "/" stripped by convention.
+            export RESTOREVERIFY_CANARY_ARCHIVEPATH=""
+            # Path of the canary file relative to the dataset root, used
+            # by the zfssend-side check (which mounts the target's own
+            # snapshot directly, not an archive).
+            export RESTOREVERIFY_CANARY_RELPATH=".borgsnap_ng_canary"
+
+            if [ "$strtBckpMchn_restoreverify" = "on" ]; then
+                strtBckpMchn_canary_mountpoint=$(zfs get -H -o value mountpoint "$strtBckpMchn_dataset" 2>/dev/null)
+                if [ "$strtBckpMchn_canary_mountpoint" = "none" ] || [ "$strtBckpMchn_canary_mountpoint" = "legacy" ] || [ -z "$strtBckpMchn_canary_mountpoint" ]; then
+                    msg "WARNING" "restore verification: dataset '$strtBckpMchn_dataset' has no conventional mountpoint (mountpoint=$strtBckpMchn_canary_mountpoint) - cannot write a canary file there, skipping restore verification for this dataset this run"
+                else
+                    strtBckpMchn_canaryfile="$strtBckpMchn_canary_mountpoint/.borgsnap_ng_canary"
+                    # Fresh content every single run (not just a touch) -
+                    # this proves TODAY's run actually captured and can
+                    # restore genuinely new data, not just that some
+                    # long-unchanged file from months ago still happens to
+                    # be readable.
+                    strtBckpMchn_canarycontent="borgsnap_ng restore-verification canary - $(date '+%Y-%m-%d %H:%M:%S') - pid $$ - dataset $strtBckpMchn_dataset"
+                    if echo "$strtBckpMchn_canarycontent" > "$strtBckpMchn_canaryfile" 2>/dev/null; then
+                        RESTOREVERIFY_CANARY_HASH=$(sha256sum "$strtBckpMchn_canaryfile" 2>/dev/null | cut -d' ' -f1)
+                        RESTOREVERIFY_CANARY_ARCHIVEPATH="run/borgsnap/$strtBckpMchn_dataset/.borgsnap_ng_canary"
+                        RESTOREVERIFY_ACTIVE="on"
+                    else
+                        # FIX: writing this one file requires the
+                        # executing user to have write access to it -
+                        # unlike everything else in this project's
+                        # least-privilege setup, which only ever needs
+                        # read access to the data being backed up. This is
+                        # a deliberate, narrow, and unavoidable exception
+                        # (see sample.conf's RESTORE_VERIFY documentation)
+                        # - not something the script can grant itself if
+                        # it isn't already there.
+                        msg "WARNING" "restore verification: could not write canary file '$strtBckpMchn_canaryfile' (permission denied?) - the executing user needs write access to this one file specifically for restore verification to work. Skipping restore verification for this dataset this run."
+                    fi
+                    unset strtBckpMchn_canaryfile
+                    unset strtBckpMchn_canarycontent
+                fi
+                unset strtBckpMchn_canary_mountpoint
+            fi
+            unset strtBckpMchn_restoreverify
+
             snapshotZFS "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             # FIX #33: Borg archive names must be unique *within a repo*.
@@ -302,6 +394,27 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_dayofmonth
         unset strtBckpMchn_borgremotecommand
         unset strtBckpMchn_rc
+
+        # RESTORE_VERIFY: a failed restore-verification anywhere this run
+        # makes the whole run report as failed, even though everything
+        # else (snapshots, borg/zfssend backups, BORG_VERIFY checks)
+        # completed normally - see the comment where RESTOREVERIFY_FAILED
+        # is initialized above for why this is treated as a genuine
+        # failure rather than a warning.
+        if [ -n "$RESTOREVERIFY_FAILED" ]; then
+            unset RESTOREVERIFY_FAILED
+            unset RESTOREVERIFY_ACTIVE
+            unset RESTOREVERIFY_CANARY_HASH
+            unset RESTOREVERIFY_CANARY_ARCHIVEPATH
+            unset RESTOREVERIFY_CANARY_RELPATH
+            return 1
+        fi
+        unset RESTOREVERIFY_FAILED
+        unset RESTOREVERIFY_ACTIVE
+        unset RESTOREVERIFY_CANARY_HASH
+        unset RESTOREVERIFY_CANARY_ARCHIVEPATH
+        unset RESTOREVERIFY_CANARY_RELPATH
+        return 0
     }
 
     

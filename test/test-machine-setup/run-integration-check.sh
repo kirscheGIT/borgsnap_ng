@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.25
+# TESTKIT_VERSION=2026-07-20.26
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.25
+# TESTKIT_VERSION=2026-07-20.26
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.25"
+TESTKIT_VERSION="2026-07-20.26"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -70,8 +70,9 @@ preflight_check_version "$REPO_ROOT/test/mocks/zpool" "test/mocks/zpool"
 preflight_check_version "$REPO_ROOT/test/mocks/borg" "test/mocks/borg"
 preflight_check_version "$REPO_ROOT/test/mocks/sendmail" "test/mocks/sendmail"
 preflight_check_version "$REPO_ROOT/test/mocks/ssh" "test/mocks/ssh"
+preflight_check_version "$REPO_ROOT/test/mocks/mount" "test/mocks/mount"
 
-for mockbin in date zfs zpool borg sendmail ssh; do
+for mockbin in date zfs zpool borg sendmail ssh mount; do
   if [ ! -x "$REPO_ROOT/test/mocks/$mockbin" ]; then
     echo "PREFLIGHT: test/mocks/$mockbin exists but is not executable (chmod +x test/mocks/$mockbin)" >&2
     preflight_fail=1
@@ -112,6 +113,11 @@ if [ ! -f "$REPO_ROOT/test/mocks/ssh" ]; then
   preflight_fail=1
 fi
 preflight_check_marker "cfg_file_hdlr.sh" "BORG_VERIFY"
+preflight_check_marker "cfg_file_hdlr.sh" "RESTORE_VERIFY"
+preflight_check_marker "backup/bckp_hdlr.sh" "RESTORE_VERIFY"
+preflight_check_marker "borg/borg_hdlr.sh" "checkRestoreBorg"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "RESTOREVERIFY_ACTIVE"
+preflight_check_marker "mail_wrapper.sh" "PARTIAL FAILURE"
 if [ ! -f "$REPO_ROOT/test/mocks/borg" ]; then
   echo "PREFLIGHT: test/mocks/borg not found" >&2
   preflight_fail=1

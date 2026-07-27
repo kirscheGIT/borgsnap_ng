@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.25
+# TESTKIT_VERSION=2026-07-20.26
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
@@ -44,5 +44,22 @@ fi
 if [ "$1" = "check" ] && [ -n "${MOCK_BORG_CHECK_RC:-}" ] && [ "$MOCK_BORG_CHECK_RC" -ne 0 ]; then
   echo "mock borg check: simulated problem found, exit $MOCK_BORG_CHECK_RC (MOCK_BORG_CHECK_RC)" >&2
   exit "$MOCK_BORG_CHECK_RC"
+fi
+if [ "$1" = "extract" ]; then
+  if [ -n "${MOCK_BORG_EXTRACT_RC:-}" ] && [ "$MOCK_BORG_EXTRACT_RC" -ne 0 ]; then
+    echo "mock borg extract: simulated failure, exit $MOCK_BORG_EXTRACT_RC (MOCK_BORG_EXTRACT_RC)" >&2
+    exit "$MOCK_BORG_EXTRACT_RC"
+  fi
+  # RESTORE_VERIFY testing: MOCK_BORG_EXTRACT_FILE reads back whatever is
+  # REALLY there (for genuine end-to-end consistency with what the code
+  # under test actually wrote as its canary file); MOCK_BORG_EXTRACT_CONTENT
+  # overrides with a fixed value instead, for deliberately simulating a
+  # mismatch/corruption scenario.
+  if [ -n "${MOCK_BORG_EXTRACT_CONTENT:-}" ]; then
+    printf '%s\n' "$MOCK_BORG_EXTRACT_CONTENT"
+  elif [ -n "${MOCK_BORG_EXTRACT_FILE:-}" ] && [ -f "$MOCK_BORG_EXTRACT_FILE" ]; then
+    cat "$MOCK_BORG_EXTRACT_FILE"
+  fi
+  exit 0
 fi
 exit 0

@@ -165,6 +165,46 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             unset lconfigfile_verify_depth
         fi
 
+        # RESTORE_VERIFY: optional, per-interval restore-path verification,
+        # e.g. "daily:off;monthly:on". Unlike BORG_VERIFY (which checks
+        # that the stored BYTES are intact), this checks that the actual
+        # RESTORE PATH works - extraction/mount, permissions, the whole
+        # pipeline - by writing a known "canary" file into the dataset
+        # before every run this is enabled for, then reading it back from
+        # each backend after the backup completes and comparing. Unset/
+        # empty means no verification for every interval - preserves
+        # existing behavior for every config that predates this feature.
+        # Validated here for the same reason as BORG_VERIFY: catch a
+        # typo'd value at config load time, not months later when a
+        # scheduled check never actually ran.
+        if [ "${RESTORE_VERIFY:-}" = "" ]; then
+            export RESTORE_VERIFY=""
+            msg "INFO" "RESTORE_VERIFY not configured, defaulting to no verification"
+        else
+            export RESTORE_VERIFY
+            msg "INFO" "RESTORE_VERIFY set to $RESTORE_VERIFY"
+            lconfigfile_rverify_OLD_IFS="$IFS"
+            IFS=';'
+            for lconfigfile_rverify_entry in $RESTORE_VERIFY; do
+                lconfigfile_rverify_depth="${lconfigfile_rverify_entry#*:}"
+                case "$lconfigfile_rverify_depth" in
+                    off|on) ;;
+                    *)
+                        lconfigfile_rverify_msg="RESTORE_VERIFY: invalid value '$lconfigfile_rverify_depth' in entry '$lconfigfile_rverify_entry' - must be one of: off, on" # noqa:unset
+                        IFS="$lconfigfile_rverify_OLD_IFS"
+                        unset lconfigfile_rverify_OLD_IFS
+                        unset lconfigfile_rverify_entry
+                        unset lconfigfile_rverify_depth
+                        die "$lconfigfile_rverify_msg"
+                        ;;
+                esac
+            done
+            IFS="$lconfigfile_rverify_OLD_IFS"
+            unset lconfigfile_rverify_OLD_IFS
+            unset lconfigfile_rverify_entry
+            unset lconfigfile_rverify_depth
+        fi
+
         if [ "$COMPRESS" = "" ]; then
             export COMPRESS="zstd,8"
             msg "INFO" "COMPRESS not configured, defaulting to zstd,8"

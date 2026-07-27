@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.25
+# TESTKIT_VERSION=2026-07-20.26
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot]|bookmark [-H]
@@ -151,18 +151,57 @@ case "$cmd" in
     fi
     ;;
   get)
-    # FIX #44: only supports the specific invocation backendZfsSend uses:
+    # FIX #44/RESTORE_VERIFY: supports the two specific invocations this
+    # project actually uses:
     #   zfs get -H -o value receive_resume_token <dataset>
-    # The dataset is always the last positional argument.
-    ds=""
-    for a in "$@"; do ds="$a"; done
-    tok=$(grep "^${ds}::resume::" "$MOCK_STATE" 2>/dev/null | sed "s|^${ds}::resume::||")
-    if [ -n "$tok" ]; then
-      echo "$tok"
-    else
-      echo "-"
-    fi
-    exit 0 ;;
+    #   zfs get -H -o value mountpoint <dataset>
+    # Property name and dataset are both positional non-flag arguments;
+    # the property name comes first, the dataset last. "-o value" is a
+    # flag+argument pair that both need skipping together, not just "-o"
+    # alone - otherwise "value" gets mistaken for a real positional arg.
+    args=""
+    skipnext=0
+    for a in "$@"; do
+      if [ "$skipnext" = 1 ]; then
+        skipnext=0
+        continue
+      fi
+      case "$a" in
+        -o) skipnext=1 ;;
+        -*) ;;
+        *) args="$args $a" ;;
+      esac
+    done
+    # shellcheck disable=SC2086
+    set -- $args
+    prop="$1"
+    ds="$2"
+    case "$prop" in
+      mountpoint)
+        mp=$(grep "^${ds}::prop::mountpoint::" "$MOCK_STATE" 2>/dev/null | tail -1 | sed "s|^${ds}::prop::mountpoint::||")
+        if [ -n "$mp" ]; then
+          echo "$mp"
+        else
+          # RESTORE_VERIFY needs a REAL, writable directory to write its
+          # canary file to during tests - MOCK_ZFS_MOUNTBASE lets a test
+          # point this at its own workdir; auto-created on demand,
+          # simulating "this dataset's regular mountpoint already exists"
+          # without needing a real ZFS mount at all.
+          mp="${MOCK_ZFS_MOUNTBASE:-/tmp/mockzfsmounts}/$ds"
+          mkdir -p "$mp" 2>/dev/null
+          echo "$mp"
+        fi
+        exit 0 ;;
+      *)
+        tok=$(grep "^${ds}::resume::" "$MOCK_STATE" 2>/dev/null | sed "s|^${ds}::resume::||")
+        if [ -n "$tok" ]; then
+          echo "$tok"
+        else
+          echo "-"
+        fi
+        exit 0 ;;
+    esac
+    ;;
   create)
     [ "$1" = "-p" ] && shift
     ds="$1"

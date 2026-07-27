@@ -375,6 +375,40 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # accumulate every sent snapshot forever.
         pruneZFSSnapshot "$bckndZfsSend_targetdataset" "$bckndZfsSend_label" "$bckndZfsSend_keepduration" ""
 
+        # RESTORE_VERIFY: mount the target's own just-received snapshot
+        # (readonly=on already blocks writes at the ZFS level regardless
+        # of mount options) and read back the canary file
+        # startBackupMachine wrote into the live SOURCE dataset before
+        # this run's snapshot - proves the actual restore path (import if
+        # needed, mount, read) works for THIS target, which a successful
+        # zfs receive alone doesn't show (that only proves the bytes
+        # transferred without a checksum error, not that mounting and
+        # reading back actually works). Must run before the pool-export
+        # step below - once exported, the pool (and this target) is
+        # unreachable to mount at all.
+        if [ "${RESTOREVERIFY_ACTIVE:-off}" = "on" ]; then
+            bckndZfsSend_restorescratch=$(mktemp -d)
+            export RESTOREVERIFY_MOUNT_IN_PROGRESS=1
+            if sudo mount -t zfs "$bckndZfsSend_targetdataset@$bckndZfsSend_label" "$bckndZfsSend_restorescratch" >/dev/null 2>&1; then
+                unset RESTOREVERIFY_MOUNT_IN_PROGRESS
+                bckndZfsSend_restoreactual=$(cat "$bckndZfsSend_restorescratch/$RESTOREVERIFY_CANARY_RELPATH" 2>/dev/null | sha256sum | cut -d' ' -f1)
+                sudo umount "$bckndZfsSend_restorescratch" >/dev/null 2>&1
+                if [ "$bckndZfsSend_restoreactual" != "$RESTOREVERIFY_CANARY_HASH" ]; then
+                    msg "ERROR" "restore verification FAILED for zfssend target '$bckndZfsSend_targetdataset' - canary content mismatch after mount (expected $RESTOREVERIFY_CANARY_HASH, got $bckndZfsSend_restoreactual). The restore path may be broken for this target."
+                    RESTOREVERIFY_FAILED=1
+                else
+                    msg "INFO" "restore verification passed for zfssend target '$bckndZfsSend_targetdataset'"
+                fi
+                unset bckndZfsSend_restoreactual
+            else
+                unset RESTOREVERIFY_MOUNT_IN_PROGRESS
+                msg "ERROR" "restore verification FAILED for zfssend target '$bckndZfsSend_targetdataset' - could not mount the target snapshot for verification. The restore path itself may be broken for this target."
+                RESTOREVERIFY_FAILED=1
+            fi
+            rmdir "$bckndZfsSend_restorescratch" 2>/dev/null
+            unset bckndZfsSend_restorescratch
+        fi
+
         # FIX #46: export the pool again if WE were the one who imported
         # it - leave an already-attached (permanent) pool alone. A failed
         # export doesn't abort the run (the backup itself already

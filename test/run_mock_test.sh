@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.25
+# TESTKIT_VERSION=2026-07-20.26
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1288,6 +1288,159 @@ assert "FIX59: the repo AFTER the failing zfssend target ALSO got backed up (the
   "grep -q \"borg create.*$WORKDIR15/repo_after\" '$MOCK_LOG'"
 assert "FIX59: the zfssend failure itself is still clearly logged" \
   "grep -q 'zfssend: send failed' '$WORKDIR15/run_mixed.log'"
+
+echo "-------------------------------------"
+echo "Restore path verification (RESTORE_VERIFY)"
+echo "-------------------------------------"
+
+WORKDIR16="$(mktemp -d)"
+mkdir -p "$WORKDIR16/repo1" "$WORKDIR16/mockmounts"
+MAILKEYFILE16="$WORKDIR16/test16.key"; echo "testpassphrase" > "$MAILKEYFILE16"; chmod 600 "$MAILKEYFILE16"
+
+export MOCK_LOG="$WORKDIR16/mock.log"
+export MOCK_STATE="$WORKDIR16/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR16/lock"
+export MOCK_ZFS_MOUNTBASE="$WORKDIR16/mockmounts"
+
+# Scenario A: RESTORE_VERIFY not set at all - no canary write, no
+# restore-check attempted, existing behavior unchanged.
+cat > "$WORKDIR16/test16-unset.conf" << EOF28
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE16"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR16/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF28
+chmod 600 "$WORKDIR16/test16-unset.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR16/test16-unset.conf" > "$WORKDIR16/run_unset.log" 2>&1
+RC_RVUNSET=$?
+assert "RESTORE_VERIFY: unset - run succeeds normally" "[ $RC_RVUNSET -eq 0 ]"
+assert "RESTORE_VERIFY: unset - no canary file is ever written" \
+  "[ ! -f '$WORKDIR16/mockmounts/tank/data/.borgsnap_ng_canary' ]"
+assert "RESTORE_VERIFY: unset - no borg extract is attempted" \
+  "! grep -q '^borg extract' '$MOCK_LOG'"
+
+# Determine today's actual interval word (same technique as BORG_VERIFY's
+# own tests) so the remaining scenarios target a depth that genuinely
+# gets looked up.
+ACTUAL_INTERVAL_RV=$(grep -oE 'borg create.*::[a-z_]+-([a-z]+)-[0-9]+ ' "$MOCK_LOG" | head -1 | sed -E 's/.*-([a-z]+)-[0-9]+ /\1/')
+[ -z "$ACTUAL_INTERVAL_RV" ] && ACTUAL_INTERVAL_RV="$ACTUAL_INTERVAL"
+
+cat > "$WORKDIR16/test16-on.conf" << EOF29
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE16"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR16/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+RESTORE_VERIFY="${ACTUAL_INTERVAL_RV}:on"
+EOF29
+chmod 600 "$WORKDIR16/test16-on.conf"
+
+# Scenario B: enabled, genuine end-to-end match - MOCK_BORG_EXTRACT_FILE
+# points at exactly where the canary got written this same run, so
+# "extraction" reads back precisely what was really just written.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_EXTRACT_FILE="$WORKDIR16/mockmounts/tank/data/.borgsnap_ng_canary" \
+  sh ./borgsnap_ng.sh run "$WORKDIR16/test16-on.conf" > "$WORKDIR16/run_match.log" 2>&1
+RC_RVMATCH=$?
+assert "RESTORE_VERIFY: enabled - canary file was actually written" \
+  "[ -f '$WORKDIR16/mockmounts/tank/data/.borgsnap_ng_canary' ]"
+assert "RESTORE_VERIFY: enabled - matching content - run succeeds" "[ $RC_RVMATCH -eq 0 ]"
+assert "RESTORE_VERIFY: enabled - matching content - no failure was reported" \
+  "! grep -q 'restore verification FAILED' '$WORKDIR16/run_match.log'"
+
+# Scenario C: enabled, but the "extracted" content doesn't match (a
+# corrupted/broken restore path) - must be a genuine FAILURE (nonzero
+# exit), not just a warning, per the explicit design decision.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_EXTRACT_CONTENT="deliberately wrong content" \
+  sh ./borgsnap_ng.sh run "$WORKDIR16/test16-on.conf" > "$WORKDIR16/run_mismatch.log" 2>&1
+RC_RVMISMATCH=$?
+assert "RESTORE_VERIFY: content mismatch is a genuine FAILURE (nonzero exit), not a warning" "[ $RC_RVMISMATCH -ne 0 ]"
+assert "RESTORE_VERIFY: the mismatch is reported clearly" \
+  "grep -q 'restore verification FAILED' '$WORKDIR16/run_mismatch.log'"
+
+# Scenario D: extraction itself fails outright (broken restore path at a
+# more fundamental level than just wrong content).
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_EXTRACT_RC=1 sh ./borgsnap_ng.sh run "$WORKDIR16/test16-on.conf" > "$WORKDIR16/run_extractfail.log" 2>&1
+RC_RVEXTRACTFAIL=$?
+assert "RESTORE_VERIFY: an extraction failure is also a genuine FAILURE" "[ $RC_RVEXTRACTFAIL -ne 0 ]"
+assert "RESTORE_VERIFY: the extraction failure is reported clearly" \
+  "grep -q 'could not extract the canary file' '$WORKDIR16/run_extractfail.log'"
+
+# Scenario E: the canary file can't be written - simulated with a
+# structural impossibility (a plain FILE where a directory is expected)
+# rather than a permission bit, since these tests run as root, which
+# bypasses standard Unix permission checks entirely (DAC_OVERRIDE) - a
+# chmod-based simulation wouldn't actually block anything here. Must be a
+# graceful skip for this dataset, not a crash of the whole run.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+touch "$WORKDIR16/not_a_directory"
+MOCK_ZFS_MOUNTBASE="$WORKDIR16/not_a_directory" sh ./borgsnap_ng.sh run "$WORKDIR16/test16-on.conf" > "$WORKDIR16/run_nowrite.log" 2>&1
+RC_RVNOWRITE=$?
+assert "RESTORE_VERIFY: a canary write failure gracefully skips verification, run still succeeds" "[ $RC_RVNOWRITE -eq 0 ]"
+assert "RESTORE_VERIFY: the write failure is reported clearly" \
+  "grep -q 'could not write canary file' '$WORKDIR16/run_nowrite.log'"
+
+echo "-------------------------------------"
+echo "Restore path verification - zfssend backend"
+echo "-------------------------------------"
+
+cat > "$WORKDIR16/test16-zfssend.conf" << EOF30
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE16"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="zfssend:restoretarget, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+RESTORE_VERIFY="${ACTUAL_INTERVAL_RV}:on"
+EOF30
+chmod 600 "$WORKDIR16/test16-zfssend.conf"
+
+# Scenario F: zfssend, matching content via the mock mount's own
+# configurable canary-write.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_MOUNTBASE="$WORKDIR16/mockmounts2" MOCK_MOUNT_CANARY_CONTENT="whatever-was-really-sent" \
+  sh ./borgsnap_ng.sh run "$WORKDIR16/test16-zfssend.conf" > "$WORKDIR16/run_zfs_mount.log" 2>&1
+RC_RVZFSMOUNT=$?
+# The mock mount always writes MOCK_MOUNT_CANARY_CONTENT, which won't
+# match the real canary hash written earlier this run - this scenario
+# specifically exercises "the mount succeeded, content read back
+# correctly, but it doesn't match" -> must be a genuine failure.
+assert "RESTORE_VERIFY (zfssend): the target gets mounted for verification" \
+  "grep -q '^mount -t zfs restoretarget' '$MOCK_LOG'"
+assert "RESTORE_VERIFY (zfssend): mismatched content is a genuine FAILURE" "[ $RC_RVZFSMOUNT -ne 0 ]"
+
+# Scenario G: zfssend, the target mount itself fails outright.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZFS_MOUNTBASE="$WORKDIR16/mockmounts3" MOCK_MOUNT_FAIL_RC=1 \
+  sh ./borgsnap_ng.sh run "$WORKDIR16/test16-zfssend.conf" > "$WORKDIR16/run_zfs_mountfail.log" 2>&1
+RC_RVZFSMOUNTFAIL=$?
+assert "RESTORE_VERIFY (zfssend): a mount failure is a genuine FAILURE" "[ $RC_RVZFSMOUNTFAIL -ne 0 ]"
+assert "RESTORE_VERIFY (zfssend): the mount failure is reported clearly" \
+  "grep -q 'could not mount the target snapshot' '$WORKDIR16/run_zfs_mountfail.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
