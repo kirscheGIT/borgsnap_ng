@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.28
+# TESTKIT_VERSION=2026-07-20.29
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
@@ -40,6 +40,13 @@ fi
 if [ "$1" = "list" ] && [ -n "${MOCK_BORG_LIST_RC:-}" ] && [ "$MOCK_BORG_LIST_RC" -ne 0 ]; then
   echo "mock borg list: simulated exit $MOCK_BORG_LIST_RC (MOCK_BORG_LIST_RC)" >&2
   exit "$MOCK_BORG_LIST_RC"
+fi
+if [ "$1" = "list" ]; then
+  # Real "borg list" prints the archive listing to stdout on success -
+  # simulate that, so a test can verify a caller that only cares about
+  # the exit code (like ensureBorgBaseInit's state check) actually
+  # suppresses it, instead of letting it leak into the log/mail.
+  echo "mockarchive-existing-1        Mon, 2026-01-01 00:00:00 [deadbeef]"
 fi
 if [ "$1" = "check" ] && [ -n "${MOCK_BORG_CHECK_RC:-}" ] && [ "$MOCK_BORG_CHECK_RC" -ne 0 ]; then
   echo "mock borg check: simulated problem found, exit $MOCK_BORG_CHECK_RC (MOCK_BORG_CHECK_RC)" >&2

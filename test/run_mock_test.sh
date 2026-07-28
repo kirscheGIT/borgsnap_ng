@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.28
+# TESTKIT_VERSION=2026-07-20.29
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1705,6 +1705,44 @@ assert "REPOLIST trailing separator: no phantom empty-repo error" \
   "! grep -q 'Empty directory string was given' '$WORKDIR20/run_trailingsep.log'"
 assert "REPOLIST trailing separator: the real repo still got backed up" \
   "grep -q \"borg create.*$WORKDIR20/repo1\" '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "ensureBorgBaseInit no longer leaks its state-check listing (real-world bug)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: mystery archive-listing lines appearing
+# in the log/mail with no explanation. Root cause: ensureBorgBaseInit's
+# internal "borg list" state check (only the exit code matters - FIX #50)
+# ran with no output redirection at all, so a successful call's own
+# archive listing leaked straight through, completely bypassing
+# MSG_LEVEL since it's borg's own native stdout, not something routed
+# through msg().
+WORKDIR21="$(mktemp -d)"
+MAILKEYFILE21="$WORKDIR21/test21.key"; echo "testpassphrase" > "$MAILKEYFILE21"; chmod 600 "$MAILKEYFILE21"
+cat > "$WORKDIR21/test21-borgbase.conf" << EOF36
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE21"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borgbase:ssh://borgbase_repo/./repo, borg, repokey-blake2; "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF36
+chmod 600 "$WORKDIR21/test21-borgbase.conf"
+export MOCK_LOG="$WORKDIR21/mock.log"
+export MOCK_STATE="$WORKDIR21/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR21/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR21/test21-borgbase.conf" > "$WORKDIR21/run_borgbase.log" 2>&1
+RC_BORGBASELEAK=$?
+assert "ensureBorgBaseInit leak fix: run succeeds" "[ $RC_BORGBASELEAK -eq 0 ]"
+assert "ensureBorgBaseInit leak fix: the state check's archive listing no longer leaks into the run's own output" \
+  "! grep -q 'mockarchive-existing-1' '$WORKDIR21/run_borgbase.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

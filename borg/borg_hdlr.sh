@@ -309,7 +309,13 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         ensureBorgBaseInit_listcmd="borg list $ensureBorgBaseInit_remotepath \"$ensureBorgBaseInit_repo\""
         msg "DEBUG" "borgbase repo state check: $ensureBorgBaseInit_listcmd"
-        eval "$ensureBorgBaseInit_listcmd"
+        # FIX #62: only the exit code matters here - the archive listing itself is
+        # irrelevant to this state check and was leaking straight to
+        # stdout unconditionally, bypassing MSG_LEVEL entirely (it's
+        # borg's own native output, not something routed through msg()),
+        # showing up as unexplained noise in the log/mail even at the
+        # quietest configured level.
+        eval "$ensureBorgBaseInit_listcmd" >/dev/null 2>&1
         ensureBorgBaseInit_listrc=$?
         msg "DEBUG" "borgbase repo state check exit code: $ensureBorgBaseInit_listrc"
 
