@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.26
+# TESTKIT_VERSION=2026-07-20.27
 # Mock zpool for borgsnap_ng tests (FIX #46: removable-media pool
 # lifecycle). Logs every invocation to $MOCK_LOG.
 # Supported: list <pool>, import <pool>, export <pool>
@@ -36,15 +36,24 @@ cmd="$1"; shift
 case "$cmd" in
   list)
     pool=""
+    wants_o=0
     for a in "$@"; do
       case "$a" in
+        -o) wants_o=1 ;;
         -*) ;;
+        cap,free|free,cap) : ;;
         *) pool="$a" ;;
       esac
     done
     if [ -n "$pool" ] && is_not_imported "$pool"; then
       echo "cannot open '$pool': no such pool" >&2
       exit 1
+    fi
+    # MOCK_ZPOOL_CAP / MOCK_ZPOOL_FREE: fault injection for the "-o
+    # cap,free" capacity-check query. Unset means no output (matching the
+    # "provider doesn't support this" degrade-gracefully path).
+    if [ "$wants_o" = 1 ] && [ -n "${MOCK_ZPOOL_CAP:-}" ]; then
+      printf '%s\t%s\n' "$MOCK_ZPOOL_CAP" "${MOCK_ZPOOL_FREE:-0}"
     fi
     exit 0 ;;
   import)

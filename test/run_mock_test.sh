@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.26
+# TESTKIT_VERSION=2026-07-20.27
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1441,6 +1441,192 @@ RC_RVZFSMOUNTFAIL=$?
 assert "RESTORE_VERIFY (zfssend): a mount failure is a genuine FAILURE" "[ $RC_RVZFSMOUNTFAIL -ne 0 ]"
 assert "RESTORE_VERIFY (zfssend): the mount failure is reported clearly" \
   "grep -q 'could not mount the target snapshot' '$WORKDIR16/run_zfs_mountfail.log'"
+
+echo "-------------------------------------"
+echo "MSG_LEVEL configurable via config file"
+echo "-------------------------------------"
+
+WORKDIR17="$(mktemp -d)"
+mkdir -p "$WORKDIR17/repo1"
+MAILKEYFILE17="$WORKDIR17/test17.key"; echo "testpassphrase" > "$MAILKEYFILE17"; chmod 600 "$MAILKEYFILE17"
+
+export MOCK_LOG="$WORKDIR17/mock.log"
+export MOCK_STATE="$WORKDIR17/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR17/lock"
+
+# Scenario A: config sets MSG_LEVEL=2 (INFO and above) - INFO-level
+# messages (like BORG_VERIFY's "passed" confirmation) must now be visible,
+# unlike the hardcoded default of 1 which would suppress them.
+cat > "$WORKDIR17/test17-level2.conf" << EOF28
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE17"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR17/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="default:repo"
+MSG_LEVEL=2
+EOF28
+chmod 600 "$WORKDIR17/test17-level2.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR17/test17-level2.conf" > "$WORKDIR17/run_level2.log" 2>&1
+RC_LEVEL2=$?
+assert "MSG_LEVEL: config-set level 2 - run succeeds" "[ $RC_LEVEL2 -eq 0 ]"
+assert "MSG_LEVEL: config-set level 2 - INFO-level borg check confirmation is now visible" \
+  "grep -q 'INFO: borg check' '$WORKDIR17/run_level2.log'"
+
+# Scenario B: default level (config doesn't set MSG_LEVEL at all) - the
+# same INFO-level confirmation must NOT be visible, matching the
+# hardcoded default of 1 (errors+warnings only).
+cat > "$WORKDIR17/test17-defaultlevel.conf" << EOF29
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE17"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR17/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+BORG_VERIFY="default:repo"
+EOF29
+chmod 600 "$WORKDIR17/test17-defaultlevel.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR17/test17-defaultlevel.conf" > "$WORKDIR17/run_defaultlevel.log" 2>&1
+RC_DEFAULTLEVEL=$?
+assert "MSG_LEVEL: unset in config - run succeeds" "[ $RC_DEFAULTLEVEL -eq 0 ]"
+assert "MSG_LEVEL: unset in config - INFO-level confirmation stays hidden at the default level" \
+  "! grep -q 'INFO: borg check' '$WORKDIR17/run_defaultlevel.log'"
+
+# Scenario C: an invalid MSG_LEVEL value is rejected at config load time.
+cat > "$WORKDIR17/test17-invalidlevel.conf" << EOF30
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE17"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR17/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=verbose
+EOF30
+chmod 600 "$WORKDIR17/test17-invalidlevel.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR17/test17-invalidlevel.conf" > "$WORKDIR17/run_invalidlevel.log" 2>&1
+RC_INVALIDLEVEL=$?
+assert "MSG_LEVEL: a non-numeric value is rejected, not silently ignored" "[ $RC_INVALIDLEVEL -ne 0 ]"
+assert "MSG_LEVEL: the rejection message names the actual problem" \
+  "grep -q \"invalid value 'verbose'\" '$WORKDIR17/run_invalidlevel.log'"
+
+echo "-------------------------------------"
+echo "Repo/target capacity reporting"
+echo "-------------------------------------"
+
+WORKDIR18="$(mktemp -d)"
+mkdir -p "$WORKDIR18/repo1"
+MAILKEYFILE18="$WORKDIR18/test18.key"; echo "testpassphrase" > "$MAILKEYFILE18"; chmod 600 "$MAILKEYFILE18"
+
+export MOCK_LOG="$WORKDIR18/mock.log"
+export MOCK_STATE="$WORKDIR18/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR18/lock"
+
+# Scenario A: local borg repo - real "df" against the actual sandbox
+# filesystem (no mocking needed, df always works locally), no warning
+# threshold configured - must report INFO fill level, not a warning.
+cat > "$WORKDIR18/test18-capacity.conf" << EOF31
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE18"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR18/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF31
+chmod 600 "$WORKDIR18/test18-capacity.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR18/test18-capacity.conf" > "$WORKDIR18/run_capacity.log" 2>&1
+RC_CAPACITY=$?
+assert "Capacity: local repo - run succeeds" "[ $RC_CAPACITY -eq 0 ]"
+assert "Capacity: local repo - fill level is reported" \
+  "grep -q 'fill level:' '$WORKDIR18/run_capacity.log'"
+
+# Scenario B: same repo, but with an artificially low warning threshold -
+# forces a WARNING regardless of actual usage, proving the threshold
+# logic itself works.
+cat > "$WORKDIR18/test18-capacitywarn.conf" << EOF32
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE18"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR18/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+CAPACITY_WARN_PERCENT=0
+EOF32
+chmod 600 "$WORKDIR18/test18-capacitywarn.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR18/test18-capacitywarn.conf" > "$WORKDIR18/run_capacitywarn.log" 2>&1
+RC_CAPACITYWARN=$?
+assert "Capacity: threshold at 0% - still succeeds (a full repo is worth warning about, not aborting over)" "[ $RC_CAPACITYWARN -eq 0 ]"
+assert "Capacity: threshold at 0% - escalates to WARNING" \
+  "grep -q 'WARNING.*full.*CAPACITY_WARN_PERCENT=0' '$WORKDIR18/run_capacitywarn.log'"
+
+# Scenario C: zfssend target - mocked zpool capacity, below threshold.
+cat > "$WORKDIR18/test18-zfscapacity.conf" << EOF33
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE18"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="zfssend:tank/capacitytarget, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+CAPACITY_WARN_PERCENT=90
+EOF33
+chmod 600 "$WORKDIR18/test18-zfscapacity.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZPOOL_CAP=42 MOCK_ZPOOL_FREE=5000000000 sh ./borgsnap_ng.sh run "$WORKDIR18/test18-zfscapacity.conf" > "$WORKDIR18/run_zfscapacity.log" 2>&1
+RC_ZFSCAPACITY=$?
+assert "Capacity: zfssend target below threshold - run succeeds" "[ $RC_ZFSCAPACITY -eq 0 ]"
+assert "Capacity: zfssend target below threshold - reports INFO fill level, not a warning" \
+  "grep -q 'INFO.*target pool.*fill level: 42% used' '$WORKDIR18/run_zfscapacity.log'"
+
+# Scenario D: zfssend target - mocked zpool capacity, AT the threshold.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_ZPOOL_CAP=95 MOCK_ZPOOL_FREE=100000000 sh ./borgsnap_ng.sh run "$WORKDIR18/test18-zfscapacity.conf" > "$WORKDIR18/run_zfscapacitywarn.log" 2>&1
+RC_ZFSCAPACITYWARN=$?
+assert "Capacity: zfssend target at/above threshold - still succeeds" "[ $RC_ZFSCAPACITYWARN -eq 0 ]"
+assert "Capacity: zfssend target at/above threshold - escalates to WARNING" \
+  "grep -q 'WARNING.*target pool.*95% full' '$WORKDIR18/run_zfscapacitywarn.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

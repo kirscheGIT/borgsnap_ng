@@ -205,7 +205,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         pruneZFS_label="${pruneZFS_label%-*}"
         pruneZFS_TotalNumberOfSnapshots=$(getZFSSnapshot "$pruneZFS_dataset" "$pruneZFS_label" "ALL" | wc -l)
 
-        msg "------ $(date) ------"
+        msg "DEBUG" "------ $(date) ------"
         if [ "$pruneZFS_TotalNumberOfSnapshots" -le "$pruneZFS_keepduration" ]; then
             msg "INFO" "No old backups to purge"
         else

@@ -409,6 +409,35 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_restorescratch
         fi
 
+        # Capacity/fill-level check for the zfssend target pool, while
+        # it's still guaranteed imported and reachable (must happen
+        # before the possible export below, or the pool may no longer be
+        # queryable).
+        bckndZfsSend_capline=$(zpool list -Hp -o cap,free "$bckndZfsSend_pool" 2>/dev/null)
+        if [ -n "$bckndZfsSend_capline" ]; then
+            bckndZfsSend_cappct=$(printf '%s\n' "$bckndZfsSend_capline" | cut -f1)
+            bckndZfsSend_capfreebytes=$(printf '%s\n' "$bckndZfsSend_capline" | cut -f2)
+            case "$bckndZfsSend_cappct" in
+                ''|*[!0-9]*)
+                    msg "DEBUG" "zfssend: could not parse pool capacity for '$bckndZfsSend_pool' - skipping capacity check this run"
+                    ;;
+                *)
+                    bckndZfsSend_capfreehuman=$(awk -v b="$bckndZfsSend_capfreebytes" 'BEGIN{if(b>=1099511627776)printf "%.1f TB",b/1099511627776;else if(b>=1073741824)printf "%.1f GB",b/1073741824;else if(b>=1048576)printf "%.1f MB",b/1048576;else printf "%d B",b}')
+                    if [ -n "${CAPACITY_WARN_PERCENT:-}" ] && [ "$bckndZfsSend_cappct" -ge "$CAPACITY_WARN_PERCENT" ]; then
+                        msg "WARNING" "zfssend target pool '$bckndZfsSend_pool' is ${bckndZfsSend_cappct}% full ($bckndZfsSend_capfreehuman free) - at or above the configured CAPACITY_WARN_PERCENT=$CAPACITY_WARN_PERCENT"
+                    else
+                        msg "INFO" "zfssend target pool '$bckndZfsSend_pool' fill level: ${bckndZfsSend_cappct}% used, $bckndZfsSend_capfreehuman free"
+                    fi
+                    unset bckndZfsSend_capfreehuman
+                    ;;
+            esac
+            unset bckndZfsSend_cappct
+            unset bckndZfsSend_capfreebytes
+        else
+            msg "DEBUG" "zfssend: 'zpool list' produced no output for pool '$bckndZfsSend_pool' - capacity check skipped"
+        fi
+        unset bckndZfsSend_capline
+
         # FIX #46: export the pool again if WE were the one who imported
         # it - leave an already-attached (permanent) pool alone. A failed
         # export doesn't abort the run (the backup itself already

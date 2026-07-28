@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.26
+# TESTKIT_VERSION=2026-07-20.27
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.26
+# TESTKIT_VERSION=2026-07-20.27
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.26"
+TESTKIT_VERSION="2026-07-20.27"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -114,6 +114,8 @@ if [ ! -f "$REPO_ROOT/test/mocks/ssh" ]; then
 fi
 preflight_check_marker "cfg_file_hdlr.sh" "BORG_VERIFY"
 preflight_check_marker "cfg_file_hdlr.sh" "RESTORE_VERIFY"
+preflight_check_marker "cfg_file_hdlr.sh" "MSG_LEVEL"
+preflight_check_marker "borg/borg_hdlr.sh" "checkRepoCapacity"
 preflight_check_marker "backup/bckp_hdlr.sh" "RESTORE_VERIFY"
 preflight_check_marker "borg/borg_hdlr.sh" "checkRestoreBorg"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "RESTOREVERIFY_ACTIVE"
@@ -135,6 +137,7 @@ preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #51"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #54"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #56"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #59"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "CAPACITY_WARN_PERCENT"
 if [ ! -f "$REPO_ROOT/test/mocks/zpool" ]; then
   echo "PREFLIGHT: test/mocks/zpool not found - this is a new file introduced by FIX #46, not just an update to an existing one" >&2
   preflight_fail=1

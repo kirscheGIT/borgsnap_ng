@@ -75,8 +75,8 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         fi
 
 
-        msg "Borg exit code is set to $BORG_EXIT_CODES"
-        msg "------ $(date) ------"
+        msg "INFO" "Borg exit code is set to $BORG_EXIT_CODES"
+        msg "DEBUG" "------ $(date) ------"
         
 
         strtBckpMchn_date=$(exec_cmd date +"%Y%m%d")

@@ -8,8 +8,6 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
     
     set -u
 
-    printf "msg_and_err_hdlr.sh invoked \n"
-
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
     fi

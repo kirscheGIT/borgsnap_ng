@@ -23,7 +23,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
 #[ ] TODO #19 Rename local variables to unique names / complete rework to reflect the changes made in the whole process
     set -u
     msg "DEBUG" "-----------------------------------------------"
-    msg "msg_and_err_hdlr.sh invoked"
+    msg "DEBUG" "cfg_file_hdlr.sh invoked"
     msg "DEBUG" "-----------------------------------------------"
 
     checkFilePerms() {
@@ -81,6 +81,23 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "$LASTFUNC: Reading Config File $lconfigfile"
         # shellcheck disable=SC1090
         . "$lconfigfile"
+
+        # MSG_LEVEL: optional, lets a config file override the message
+        # verbosity that's otherwise hardcoded in borgsnap_ng.sh (0=errors
+        # only, 1=+warnings, 2=+info, 3=+verbose, 5=full debug - see
+        # msg_and_err_hdlr.sh for the exact thresholds). If the config
+        # file doesn't set it, whatever borgsnap_ng.sh set before sourcing
+        # this file stands unchanged - this is purely validation, not a
+        # default-setting step. Messages logged before this point (during
+        # early sourcing) already used the pre-config level and can't be
+        # retroactively changed.
+        case "$MSG_LEVEL" in
+            ''|*[!0-9]*)
+                die "MSG_LEVEL: invalid value '$MSG_LEVEL' - must be a non-negative integer (0=errors only ... 5=full debug)"
+                ;;
+        esac
+        export MSG_LEVEL
+        msg "DEBUG" "MSG_LEVEL is $MSG_LEVEL"
 
         # [ ] TODO: #20 Modifiy to check if borg user is used
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"

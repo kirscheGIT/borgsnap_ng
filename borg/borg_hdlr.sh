@@ -52,10 +52,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         initBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$initBorg_borgpath" ]; then
-            msg "borgpath set"
+            msg "DEBUG" "borgpath set"
             initBorg_remotepath="--remote-path=${initBorg_borgpath}"
         else
-            msg "borgpath not set - default to borg"
+            msg "DEBUG" "borgpath not set - default to borg"
             initBorg_remotepath="--remote-path=borg"
         fi
 
@@ -123,10 +123,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         crtBorg_cmdline=""
 
         if [ -n "$crtBorg_borgpath" ]; then
-            msg "borgpath set"
+            msg "DEBUG" "borgpath set"
             crtBorg_remotepath="--remote-path=${crtBorg_borgpath}"
         else
-            msg "borgpath not set - default to borg"
+            msg "DEBUG" "borgpath not set - default to borg"
             crtBorg_remotepath="--remote-path=borg"
         fi
         if [ -d $crtBorg_srcpath ]; then
@@ -212,10 +212,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         pruneBorg_cmdline=""
 
         if [ -n "$pruneBorg_borgpath" ]; then
-            msg "borgpath set"
+            msg "DEBUG" "borgpath set"
             pruneBorg_remotepath="--remote-path=${pruneBorg_borgpath}"
         else
-            msg "borgpath not set - default to borg"
+            msg "DEBUG" "borgpath not set - default to borg"
             pruneBorg_remotepath="--remote-path=borg"
         fi
 
@@ -510,6 +510,62 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         return 0
     }
 
+    checkRepoCapacity(){
+        # $1 - mandatory repo path
+        # Reports the repo's filesystem fill level (used/available/
+        # percent) after backup - INFO normally, WARNING if it's at or
+        # above the optional CAPACITY_WARN_PERCENT threshold. Best-effort
+        # for remote (ssh://) repos: some providers' restricted shells
+        # (see FIX #50's BorgBase discussion) may not support "df" at
+        # all - this degrades gracefully to a DEBUG-level skip note
+        # rather than treating that as an error.
+        checkRepoCapacity_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkRepoCapacity"
+        checkRepoCapacity_repo="$1"
+        checkRepoCapacity_host=""
+        checkRepoCapacity_path=""
+
+        if [ "${checkRepoCapacity_repo#ssh://}" != "$checkRepoCapacity_repo" ]; then
+            checkRepoCapacity_host="${checkRepoCapacity_repo#ssh://}"
+            checkRepoCapacity_host="${checkRepoCapacity_host%%/*}"
+            checkRepoCapacity_path="${checkRepoCapacity_repo#ssh://*/}"
+            checkRepoCapacity_dfline=$(ssh "$checkRepoCapacity_host" df -Pk "$checkRepoCapacity_path" 2>/dev/null | tail -1)
+        else
+            checkRepoCapacity_dfline=$(df -Pk "$checkRepoCapacity_repo" 2>/dev/null | tail -1)
+        fi
+
+        if [ -n "$checkRepoCapacity_dfline" ]; then
+            checkRepoCapacity_pct=$(printf '%s\n' "$checkRepoCapacity_dfline" | awk '{print $5}' | tr -d '%')
+            checkRepoCapacity_avail=$(printf '%s\n' "$checkRepoCapacity_dfline" | awk '{print $4}')
+            case "$checkRepoCapacity_pct" in
+                ''|*[!0-9]*)
+                    msg "DEBUG" "checkRepoCapacity: could not parse 'df' output for repo '$checkRepoCapacity_repo' - skipping capacity check this run"
+                    ;;
+                *)
+                    checkRepoCapacity_availhuman=$(awk -v kb="$checkRepoCapacity_avail" 'BEGIN{if(kb>=1073741824)printf "%.1f TB",kb/1073741824;else if(kb>=1048576)printf "%.1f GB",kb/1048576;else if(kb>=1024)printf "%.1f MB",kb/1024;else printf "%d KB",kb}')
+                    if [ -n "${CAPACITY_WARN_PERCENT:-}" ] && [ "$checkRepoCapacity_pct" -ge "$CAPACITY_WARN_PERCENT" ]; then
+                        msg "WARNING" "repo '$checkRepoCapacity_repo' is ${checkRepoCapacity_pct}% full ($checkRepoCapacity_availhuman free) - at or above the configured CAPACITY_WARN_PERCENT=$CAPACITY_WARN_PERCENT"
+                    else
+                        msg "INFO" "repo '$checkRepoCapacity_repo' fill level: ${checkRepoCapacity_pct}% used, $checkRepoCapacity_availhuman free"
+                    fi
+                    unset checkRepoCapacity_availhuman
+                    ;;
+            esac
+            unset checkRepoCapacity_pct
+            unset checkRepoCapacity_avail
+        else
+            msg "DEBUG" "checkRepoCapacity: 'df' produced no output for repo '$checkRepoCapacity_repo' (a remote provider's restricted shell may not support it) - capacity check skipped"
+        fi
+
+        unset checkRepoCapacity_dfline
+        unset checkRepoCapacity_host
+        unset checkRepoCapacity_path
+        LASTFUNC="$checkRepoCapacity_CALLINGFUCNTION"
+        unset checkRepoCapacity_CALLINGFUCNTION
+        unset checkRepoCapacity_repo
+        return 0
+    }
+
     backendBorg(){
         # FIX #41: backend wrapper called from startBackupMachine's repo
         # dispatch (see backup/bckp_hdlr.sh). Bundles the existing
@@ -585,6 +641,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         pruneBorg "$backendBorg_repo" "$backendBorg_pruneopts" "$backendBorg_intervallabel" "$backendBorg_remotecmd"
         checkBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_verifydepth"
         checkRestoreBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_label"
+        checkRepoCapacity "$backendBorg_repo"
 
         LASTFUNC="$backendBorg_CALLINGFUCNTION"
         unset backendBorg_CALLINGFUCNTION
