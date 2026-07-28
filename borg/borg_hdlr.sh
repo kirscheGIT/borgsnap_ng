@@ -108,10 +108,19 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      if multiple remote repos are used, this value
         #      is used for all of them!
 
+        # FIX #60: this used to unconditionally force MSG_LEVEL=5 (full
+        # debug) for the duration of createBorg, restoring the real value
+        # afterward - meaning borg-side DEBUG messages always appeared
+        # regardless of the user's configured MSG_LEVEL, while every
+        # OTHER function correctly respected it. This is exactly why
+        # MSG_LEVEL appeared to be "ignored" - it silently wasn't being
+        # honored specifically here, and the resulting asymmetry (lots of
+        # borg-side debug noise, but properly-quiet output from
+        # everywhere else) is also why zfssend's own output seemed to be
+        # "missing" by comparison. No override at all now - createBorg
+        # respects whatever level is configured, like everything else.
         crtBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="createBorg"
-        crtBorg_msglevel="$MSG_LEVEL"
-        MSG_LEVEL=5
         crtBorg_OLD_IFS="$IFS"
         IFS=' '
         crtBorg_pathlist="$1"
@@ -155,10 +164,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 fi
             done
         else
-            MSG_LEVEL=$crtBorg_msglevel
             IFS="$crtBorg_OLD_IFS"
             unset crtBorg_OLD_IFS
-            unset crtBorg_msglevel
             unset crtBorg_cmdline
             unset crtBorg_i
             unset crtBorg_pathlist
@@ -172,12 +179,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             err_hdlr "1"
             return 1
         fi
-        MSG_LEVEL=$crtBorg_msglevel
         IFS="$crtBorg_OLD_IFS"
         unset crtBorg_OLD_IFS
         LASTFUNC="$crtBorg_CALLINGFUCNTION"
         unset crtBorg_CALLINGFUCNTION
-        unset crtBorg_msglevel
         unset crtBorg_cmdline
         unset crtBorg_i
         unset crtBorg_pathlist

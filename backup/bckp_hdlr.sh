@@ -293,6 +293,18 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
 
             for strtBckpMchn_repoandcmd in $strtBckpMchn_repolist; do
                 strtBckpMchn_repospec=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
+
+                # FIX #61: a trailing separator in REPOLIST (e.g.
+                # "...;repo3, ; " with nothing after the last ";") produces a phantom
+                # entry that's empty once trimmed - skip it silently
+                # instead of falling through to the default "borg" case
+                # below with a blank repo path, which produced confusing
+                # "Empty directory string was given!"/"repo ''" errors
+                # for something that was never a real, intended entry.
+                if [ -z "$strtBckpMchn_repospec" ]; then
+                    continue
+                fi
+
                 strtBckpMchn_borgremotecommand=$(echo "$strtBckpMchn_repoandcmd" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
                 # FIX #50: optional third field - encryption mode for a
                 # fresh "borg init" (e.g. "repokey-blake2"). Empty/absent

@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.27
+# TESTKIT_VERSION=2026-07-20.28
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1627,6 +1627,84 @@ RC_ZFSCAPACITYWARN=$?
 assert "Capacity: zfssend target at/above threshold - still succeeds" "[ $RC_ZFSCAPACITYWARN -eq 0 ]"
 assert "Capacity: zfssend target at/above threshold - escalates to WARNING" \
   "grep -q 'WARNING.*target pool.*95% full' '$WORKDIR18/run_zfscapacitywarn.log'"
+
+echo "-------------------------------------"
+echo "MSG_LEVEL is honored by createBorg (real-world bug)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: MSG_LEVEL=0 in the config was being
+# silently ignored specifically during createBorg - it hardcoded
+# MSG_LEVEL=5 (full debug) for its own duration and restored the real
+# value only afterward, so borg-side DEBUG messages always appeared
+# regardless of what the user configured, while every OTHER function
+# correctly respected it - a confusing asymmetry.
+WORKDIR19="$(mktemp -d)"
+mkdir -p "$WORKDIR19/repo1"
+MAILKEYFILE19="$WORKDIR19/test19.key"; echo "testpassphrase" > "$MAILKEYFILE19"; chmod 600 "$MAILKEYFILE19"
+cat > "$WORKDIR19/test19-level0.conf" << EOF34
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE19"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR19/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=0
+EOF34
+chmod 600 "$WORKDIR19/test19-level0.conf"
+export MOCK_LOG="$WORKDIR19/mock.log"
+export MOCK_STATE="$WORKDIR19/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR19/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR19/test19-level0.conf" > "$WORKDIR19/run_level0.log" 2>&1
+RC_LEVEL0=$?
+assert "MSG_LEVEL=0: run succeeds" "[ $RC_LEVEL0 -eq 0 ]"
+assert "MSG_LEVEL=0: createBorg's own DEBUG messages are correctly suppressed, not forced on" \
+  "! grep -q 'DEBUG:.*in Function createBorg' '$WORKDIR19/run_level0.log'"
+
+echo "-------------------------------------"
+echo "REPOLIST trailing separator (real-world bug)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: a REPOLIST ending in a trailing
+# separator ("...;last_repo, ; ") produced a phantom, empty entry after
+# trimming, which fell through to the default "borg" case with a blank
+# repo path - "Empty directory string was given!" and similar confusing
+# errors for something that was never a real, intended repo entry.
+WORKDIR20="$(mktemp -d)"
+mkdir -p "$WORKDIR20/repo1"
+MAILKEYFILE20="$WORKDIR20/test20.key"; echo "testpassphrase" > "$MAILKEYFILE20"; chmod 600 "$MAILKEYFILE20"
+cat > "$WORKDIR20/test20-trailingsep.conf" << EOF35
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE20"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR20/repo1, ; "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF35
+chmod 600 "$WORKDIR20/test20-trailingsep.conf"
+export MOCK_LOG="$WORKDIR20/mock.log"
+export MOCK_STATE="$WORKDIR20/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR20/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR20/test20-trailingsep.conf" > "$WORKDIR20/run_trailingsep.log" 2>&1
+RC_TRAILINGSEP=$?
+assert "REPOLIST trailing separator: run succeeds" "[ $RC_TRAILINGSEP -eq 0 ]"
+assert "REPOLIST trailing separator: no phantom empty-repo error" \
+  "! grep -q 'Empty directory string was given' '$WORKDIR20/run_trailingsep.log'"
+assert "REPOLIST trailing separator: the real repo still got backed up" \
+  "grep -q \"borg create.*$WORKDIR20/repo1\" '$MOCK_LOG'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
