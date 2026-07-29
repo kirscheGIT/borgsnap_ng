@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.30
+# TESTKIT_VERSION=2026-07-20.31
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1786,6 +1786,61 @@ assert "FIX63: restore verification is explicitly skipped, not run against a sta
   "grep -q 'skipping restore verification' '$WORKDIR22/run_createfail.log'"
 assert "FIX63: no false-positive 'restore path may be corrupting data' error appears" \
   "! grep -q 'restore verification FAILED' '$WORKDIR22/run_createfail.log'"
+
+echo "-------------------------------------"
+echo "RESTORE_VERIFY skips a reused (same-day) snapshot (real-world false positive)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: a same-day rerun finds today's ZFS
+# snapshot already exists (a known, deliberate retry-safety behavior -
+# snapshotZFS reuses it rather than taking a new one) - but the canary
+# file gets freshly rewritten to the LIVE dataset every run, BEFORE
+# snapshotZFS runs. If the snapshot is reused rather than fresh, that
+# fresh write was never captured anywhere - checking it against the
+# reused snapshot's (older) canary content always mismatches, misreporting
+# a harmless, well-understood retry scenario as data corruption.
+WORKDIR23="$(mktemp -d)"
+mkdir -p "$WORKDIR23/repo1"
+MAILKEYFILE23="$WORKDIR23/test23.key"; echo "testpassphrase" > "$MAILKEYFILE23"; chmod 600 "$MAILKEYFILE23"
+cat > "$WORKDIR23/test23-reused.conf" << EOF38
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE23"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR23/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+RESTORE_VERIFY="default:on"
+MSG_LEVEL=2
+EOF38
+chmod 600 "$WORKDIR23/test23-reused.conf"
+export MOCK_LOG="$WORKDIR23/mock.log"
+export MOCK_STATE="$WORKDIR23/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR23/lock"
+export MOCK_ZFS_MOUNTBASE="$WORKDIR23/mockmounts"
+
+# Seed all three possible interval labels for today's (pinned mock) date
+# as already-existing snapshots - guarantees the run's actual active
+# interval (decided internally by chkDateStr's own date rules, not
+# something this test needs to predict) finds a pre-existing snapshot and
+# takes the reuse path, regardless of which specific interval that is.
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "tank/data@monthly-20260715" >> "$MOCK_STATE"
+echo "tank/data@weekly-20260715" >> "$MOCK_STATE"
+echo "tank/data@daily-20260715" >> "$MOCK_STATE"
+MOCK_BORG_EXTRACT_FILE="$WORKDIR23/mockmounts/tank/data/.borgsnap_ng_canary" \
+  sh ./borgsnap_ng.sh run "$WORKDIR23/test23-reused.conf" > "$WORKDIR23/run_second.log" 2>&1
+RC_REUSED_SECOND=$?
+assert "FIX64: second run (reused snapshot) still succeeds" "[ $RC_REUSED_SECOND -eq 0 ]"
+assert "FIX64: second run explicitly skips restore verification instead of a false mismatch" \
+  "grep -q 'skipping restore verification' '$WORKDIR23/run_second.log'"
+assert "FIX64: second run reports no false-positive corruption error" \
+  "! grep -q 'restore verification FAILED' '$WORKDIR23/run_second.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

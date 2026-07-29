@@ -166,6 +166,14 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         if [ -n "$(getZFSSnapshot "$snapshotZFS_dataset" "$snapshotZFS_label")" ]; then
             msg "WARNING" "ZFS Snapshot for dataset $snapshotZFS_dataset @ label $snapshotZFS_label exists!"
             msg "WARNING" "Assuming last Borg run didn't finish - restarting Borg"
+            # FIX #64: signal to the caller that the EXISTING snapshot is
+            # being reused, not a fresh one taken this run - anything that
+            # depends on "what does THIS run's snapshot actually contain
+            # right now" (specifically RESTORE_VERIFY's canary file, which
+            # gets written to the live dataset immediately before this
+            # call) cannot rely on a reused snapshot reflecting that fresh
+            # write, since the snapshot predates it.
+            snapshotZFS_reused=1 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
         else
             if [ "$snapshotZFS_recursive" = "r" ] || [ "$snapshotZFS_recursive" = "R" ] ; then
                 exec_cmd zfs snapshot -r "$snapshotZFS_dataset@$snapshotZFS_label"
@@ -176,6 +184,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             # loop could hang forever if any other process (sanoid, second
             # instance, another admin) matched "zfs snapshot".
             msg "INFO" "Snapshot operation for dataset $snapshotZFS_dataset @ label $snapshotZFS_label finished."
+            snapshotZFS_reused=0 # noqa:unset - see the other assignment above
         fi
         LASTFUNC="$snapshotZFS_CALLINGFUCNTION"
         unset snapshotZFS_CALLINGFUCNTION
@@ -184,7 +193,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset snapshotZFS_label
         IFS="$snapshotZFS_OLD_IFS"
         unset snapshotZFS_OLD_IFS
-        return 0
+        return "$snapshotZFS_reused"
     }    
 
     pruneZFSSnapshot() {

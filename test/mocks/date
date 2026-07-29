@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.30
+# TESTKIT_VERSION=2026-07-20.31
 # Mock date for borgsnap_ng tests.
 #
 # bckp_hdlr.sh calls `date +"%Y%m%d"`, `date +"%w"`, and `date +"%d"` to pick
