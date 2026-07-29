@@ -25,6 +25,12 @@ no separate implementation to keep in sync.
 
 ## systemd (Debian/Proxmox, or anywhere systemd is your init)
 
+If you installed via `install.sh` (see the main README), the steps below
+already happened - it copies both unit files, sets `ExecStart=` to your
+actual install path, and adds `User=`/`Group=` for the dedicated backup
+user, none of which the manual steps below do automatically. Skip ahead
+to the `systemctl enable --now` step.
+
 ```
 cp ops/systemd/borgsnap-ng@.service /etc/systemd/system/
 cp ops/systemd/borgsnap-ng@.timer   /etc/systemd/system/
