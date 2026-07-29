@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.29
+# TESTKIT_VERSION=2026-07-20.30
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_MOUNT_FAIL_RC=<code>   any mount call exits with this code
 #     instead of 0 - but ONLY while RESTOREVERIFY_MOUNT_IN_PROGRESS is

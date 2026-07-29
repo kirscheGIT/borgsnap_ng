@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.29
+# TESTKIT_VERSION=2026-07-20.30
 # Mock zpool for borgsnap_ng tests (FIX #46: removable-media pool
 # lifecycle). Logs every invocation to $MOCK_LOG.
 # Supported: list <pool>, import <pool>, export <pool>

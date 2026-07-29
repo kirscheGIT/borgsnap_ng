@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.29
+# TESTKIT_VERSION=2026-07-20.30
 # Mock sendmail for mail_wrapper.sh tests. Captures the full message
 # (headers + body, exactly as piped via `sendmail -t`) to $MOCK_MAIL_LOG
 # for the test to grep/assert against. Ignores its own arguments (-t etc.)

@@ -130,6 +130,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         crtBorg_borgpath="$5"
         crtBorg_remotepath=""
         crtBorg_cmdline=""
+        crtBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$crtBorg_borgpath" ]; then
             msg "DEBUG" "borgpath set"
@@ -161,6 +162,12 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                     # DEBUG mode - surface it instead, then continue with
                     # the remaining repos as originally intended.
                     msg "ERROR" "borg create failed (exit $crtBorg_rc) for repo $crtBorg_i, dataset $crtBorg_srcpath - continuing with remaining repos"
+                    # FIX #63: report the failure back to backendBorg, so
+                    # it can skip checkRestoreBorg for this repo instead of
+                    # checking a stale, pre-existing archive under this
+                    # same name (e.g. a same-day rerun hitting "already
+                    # exists") and misreporting that as data corruption.
+                    crtBorg_failed=1 # noqa:unset - see the initial assignment above
                 fi
             done
         else
@@ -192,7 +199,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset crtBorg_srcpath
         unset crtBorg_remotepath
         unset crtBorg_rc
-        return 0
+        return "$crtBorg_failed"
 
     }
 
@@ -647,11 +654,26 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
         msg "DEBUG" "Repo is: $backendBorg_repo "
         createBorg "$backendBorg_repo" "$backendBorg_label" "$backendBorg_createopts" "$backendBorg_srcpath" "$backendBorg_remotecmd"
+        backendBorg_createfailed=$?
         msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
         msg "DEBUG" "Repo is: $backendBorg_repo "
         pruneBorg "$backendBorg_repo" "$backendBorg_pruneopts" "$backendBorg_intervallabel" "$backendBorg_remotecmd"
         checkBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_verifydepth"
-        checkRestoreBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_label"
+        # FIX #63: skip checkRestoreBorg specifically if createBorg failed
+        # for this repo (e.g. a same-day rerun hitting "archive already
+        # exists") - the archive under today's label is then a STALE one
+        # from an earlier attempt, not something this run actually wrote,
+        # and checking it would compare today's freshly-computed canary
+        # hash against old content, misreporting a harmless non-event as
+        # "the restore path may be corrupting data". checkBorg and
+        # checkRepoCapacity above are unaffected - they're meaningful
+        # checks on the repo in general, independent of whether today's
+        # specific archive got created.
+        if [ "$backendBorg_createfailed" -eq 0 ]; then
+            checkRestoreBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_label"
+        else
+            msg "INFO" "skipping restore verification for repo '$backendBorg_repo' - today's archive was not freshly created this run, nothing new to verify"
+        fi
         checkRepoCapacity "$backendBorg_repo"
 
         LASTFUNC="$backendBorg_CALLINGFUCNTION"
@@ -666,6 +688,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset backendBorg_encryption
         unset backendBorg_repotype
         unset backendBorg_verifydepth
+        unset backendBorg_createfailed
         return 0
     }
 

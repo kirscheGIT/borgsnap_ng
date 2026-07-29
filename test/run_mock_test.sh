@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.29
+# TESTKIT_VERSION=2026-07-20.30
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1743,6 +1743,49 @@ RC_BORGBASELEAK=$?
 assert "ensureBorgBaseInit leak fix: run succeeds" "[ $RC_BORGBASELEAK -eq 0 ]"
 assert "ensureBorgBaseInit leak fix: the state check's archive listing no longer leaks into the run's own output" \
   "! grep -q 'mockarchive-existing-1' '$WORKDIR21/run_borgbase.log'"
+
+echo "-------------------------------------"
+echo "RESTORE_VERIFY skips a repo whose createBorg failed (real-world false positive)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: a same-day rerun hits "archive already
+# exists" for one repo (createBorg fails, correctly logged and skipped
+# per FIX #36) - but checkRestoreBorg used to run anyway, checking
+# TODAY'S label against whatever STALE archive already existed under that
+# name from an earlier attempt. Comparing this run's freshly-computed
+# canary hash against old content always mismatches, misreporting a
+# harmless non-event as "the restore path may be corrupting data".
+WORKDIR22="$(mktemp -d)"
+mkdir -p "$WORKDIR22/repo1"
+MAILKEYFILE22="$WORKDIR22/test22.key"; echo "testpassphrase" > "$MAILKEYFILE22"; chmod 600 "$MAILKEYFILE22"
+cat > "$WORKDIR22/test22-createfail.conf" << EOF37
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE22"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR22/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+RESTORE_VERIFY="default:on"
+MSG_LEVEL=2
+EOF37
+chmod 600 "$WORKDIR22/test22-createfail.conf"
+export MOCK_LOG="$WORKDIR22/mock.log"
+export MOCK_STATE="$WORKDIR22/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR22/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_FAIL_CREATE_REPO="$WORKDIR22/repo1" sh ./borgsnap_ng.sh run "$WORKDIR22/test22-createfail.conf" > "$WORKDIR22/run_createfail.log" 2>&1
+RC_CREATEFAIL63=$?
+assert "FIX63: run still succeeds when createBorg fails for this repo" "[ $RC_CREATEFAIL63 -eq 0 ]"
+assert "FIX63: restore verification is explicitly skipped, not run against a stale archive" \
+  "grep -q 'skipping restore verification' '$WORKDIR22/run_createfail.log'"
+assert "FIX63: no false-positive 'restore path may be corrupting data' error appears" \
+  "! grep -q 'restore verification FAILED' '$WORKDIR22/run_createfail.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"
