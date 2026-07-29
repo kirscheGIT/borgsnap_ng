@@ -222,6 +222,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         pruneBorg_borgpath="$4"
         pruneBorg_remotepath=""
         pruneBorg_cmdline=""
+        pruneBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$pruneBorg_borgpath" ]; then
             msg "DEBUG" "borgpath set"
@@ -238,19 +239,45 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 pruneBorg_cmdline="borg prune $pruneBorg_borgopts $pruneBorg_remotepath ${pruneBorg_i}"
                 #exec_cmd borg prune "$pruneBorg_borgopts" "$pruneBorg_remotepath" "${pruneBorg_i}"
                 exec_cmd eval $pruneBorg_cmdline
+                pruneBorg_rc=$?
+                if [ "$pruneBorg_rc" -ne 0 ]; then
+                    # FIX #65: exec_cmd intentionally skips err_hdlr when
+                    # LASTFUNC=="pruneBorg" now (see FIX #36/#57/#63) - one
+                    # repo's prune failing (e.g. a transient network issue)
+                    # must not abort the whole run, and specifically must
+                    # not prevent pruneZFSSnapshot (source-side retention)
+                    # from running afterward.
+                    msg "ERROR" "borg prune failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                    pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                fi
                 if [ "$pruneBorg_compactlabel" = "monthly" ]; then
                     pruneBorg_cmdline="borg compact ${pruneBorg_i}"
                     exec_cmd eval $pruneBorg_cmdline
+                    pruneBorg_rc=$?
+                    if [ "$pruneBorg_rc" -ne 0 ]; then
+                        msg "ERROR" "borg compact failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                        pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                    fi
                 fi  
                 #set -e
             else 
                 pruneBorg_cmdline="borg prune $pruneBorg_borgopts ${pruneBorg_i}"
                 #exec_cmd borg prune "$pruneBorg_borgopts" "${pruneBorg_i}"
                 exec_cmd eval $pruneBorg_cmdline
+                pruneBorg_rc=$?
+                if [ "$pruneBorg_rc" -ne 0 ]; then
+                    msg "ERROR" "borg prune failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                    pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                fi
                 if [ "$pruneBorg_compactlabel" = "monthly" ]; then
                     pruneBorg_cmdline="borg compact ${pruneBorg_i}"
                     #exec_cmd borg compact "${pruneBorg_i}"
                     exec_cmd eval $pruneBorg_cmdline
+                    pruneBorg_rc=$?
+                    if [ "$pruneBorg_rc" -ne 0 ]; then
+                        msg "ERROR" "borg compact failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                        pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                    fi
                 fi    
                 #set -e
             fi
@@ -266,7 +293,8 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset pruneBorg_compactlabel
         unset pruneBorg_borgpath
         unset pruneBorg_remotepath
-        return 0
+        unset pruneBorg_rc
+        return "$pruneBorg_failed"
     }
 
     ensureBorgBaseInit(){

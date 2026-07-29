@@ -87,6 +87,32 @@ forget to do remote backups, because a local backup isn't disaster proofing
 your data.
 
 ## borgsnap installation
+
+### Quick install (recommended)
+
+```
+git clone <this repo>
+cd borgsnap_ng
+sudo ./install.sh
+```
+
+Copies borgsnap_ng to `/usr/local/bin/borgsnap_ng` (override with
+`--install-dir=PATH`), and on request creates the dedicated `borg` system
+user with its least-privilege sudo/tmpfiles setup, plus the systemd unit
+templates. Run `./install.sh --help` for all options, or `--dry-run` to
+preview without changing anything. This does not create a specific
+backup configuration or ZFS delegation for your own datasets - see
+`sample.conf` and `ops/least-privilege/setup-zfs-allow.sh` for that next
+step.
+
+### Manual / older instructions
+
+The steps below predate `install.sh` and reference the original
+`borgsnap` project's config format (`FS=`, `LOCAL=`, `MONTH_KEEP=`, etc.),
+which no longer matches borgsnap_ng's actual `sample.conf` - kept here
+for now, pending a full rewrite, but prefer the Quick install above and
+`sample.conf`'s own inline documentation for anything current.
+
 ```
 git clone git@github.com:jortan/borgsnap.git
 ```
@@ -240,3 +266,9 @@ you:
 # borgwrapper /path/to/my/borgsnap.conf list /backup/borg/zroot/root
 [...]
 ```
+
+## Known limitations
+
+See [BACKLOG.md](BACKLOG.md) for understood, deliberately deferred
+edge cases and possible future improvements.
+

@@ -228,6 +228,20 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             unset strtBckpMchn_restoreverify
 
             snapshotZFS "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
+            strtBckpMchn_snapreused=$?
+            if [ "$strtBckpMchn_snapreused" -ne 0 ] && [ "${RESTOREVERIFY_ACTIVE:-off}" = "on" ]; then
+                # FIX #64: the snapshot for today's label already existed
+                # and was reused (see snapshotZFS's own WARNING above) -
+                # the canary content written just above is for a fresh
+                # snapshot that never happened this run, so it was never
+                # actually captured anywhere. Comparing against a reused,
+                # stale snapshot would always mismatch and misreport a
+                # harmless non-event as "the restore path may be
+                # corrupting data" - skip the comparison entirely instead.
+                msg "INFO" "restore verification: today's snapshot was reused from an earlier run rather than freshly taken (see the warning above) - the canary written this run was never captured, skipping restore verification for this dataset this run"
+                RESTOREVERIFY_ACTIVE="off"
+            fi
+            unset strtBckpMchn_snapreused
             mountZFSSnapshot "$strtBckpMchn_snapmountbasedir" "$strtBckpMchn_dataset" "$strtBckpMchn_label" "$strtBckpMchn_recursive"
             # FIX #33: Borg archive names must be unique *within a repo*.
             # strtBckpMchn_label (interval-date, e.g. "monthly-20260719") is

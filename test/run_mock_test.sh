@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.31
+# TESTKIT_VERSION=2026-07-20.32
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1841,6 +1841,51 @@ assert "FIX64: second run explicitly skips restore verification instead of a fal
   "grep -q 'skipping restore verification' '$WORKDIR23/run_second.log'"
 assert "FIX64: second run reports no false-positive corruption error" \
   "! grep -q 'restore verification FAILED' '$WORKDIR23/run_second.log'"
+
+echo "-------------------------------------"
+echo "pruneBorg resilience across repos and ZFS retention (FIX #65)"
+echo "-------------------------------------"
+
+# Reproduces the discussed real-world risk: a transient prune failure
+# (e.g. a network hiccup with one remote repo) must not abort the whole
+# run - and specifically must not prevent pruneZFSSnapshot (source-side
+# ZFS retention) from running afterward. Before this fix, pruneBorg had
+# no exec_cmd carve-out at all (unlike createBorg/initBorg), so any prune
+# failure triggered a full err_hdlr/exit - if this happened repeatedly
+# (a chronically flaky remote), source-side snapshots would genuinely
+# accumulate since retention never got a chance to run.
+WORKDIR24="$(mktemp -d)"
+mkdir -p "$WORKDIR24/repo_ok" "$WORKDIR24/repo_bad"
+MAILKEYFILE24="$WORKDIR24/test24.key"; echo "testpassphrase" > "$MAILKEYFILE24"; chmod 600 "$MAILKEYFILE24"
+cat > "$WORKDIR24/test24-prunefail.conf" << EOF39
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE24"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR24/repo_bad, ; $WORKDIR24/repo_ok, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;weekly,4;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF39
+chmod 600 "$WORKDIR24/test24-prunefail.conf"
+export MOCK_LOG="$WORKDIR24/mock.log"
+export MOCK_STATE="$WORKDIR24/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR24/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_FAIL_PRUNE_REPO="$WORKDIR24/repo_bad" sh ./borgsnap_ng.sh run "$WORKDIR24/test24-prunefail.conf" > "$WORKDIR24/run_prunefail.log" 2>&1
+RC_PRUNEFAIL=$?
+assert "FIX65: run succeeds overall despite one repo's prune failing" "[ $RC_PRUNEFAIL -eq 0 ]"
+assert "FIX65: the prune failure is reported clearly" \
+  "grep -q 'borg prune failed' '$WORKDIR24/run_prunefail.log'"
+assert "FIX65: the OTHER repo's prune still ran (not aborted)" \
+  "grep -q \"borg prune.*$WORKDIR24/repo_ok\" '$MOCK_LOG'"
+assert "FIX65: source-side ZFS retention (pruneZFSSnapshot) still ran afterward, not skipped" \
+  "grep -q 'No old backups to purge\\|Purging old snapshot' '$WORKDIR24/run_prunefail.log'"
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

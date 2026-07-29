@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.31
+# TESTKIT_VERSION=2026-07-20.32
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
@@ -17,6 +17,12 @@
 #     repo (matched as a substring of the repo argument) fails with exit
 #     1. Used to verify FIX #57 (a failing init for one repo must be
 #     reported, but must not abort backups to the other configured repos).
+#   MOCK_BORG_FAIL_PRUNE_REPO=/path/to/repo   "borg prune" targeting that
+#     repo (matched as a substring of the repo argument) fails with exit
+#     1. Used to verify FIX #65 (a failing prune for one repo must be
+#     reported, but must not abort the whole run - specifically must not
+#     prevent pruneZFSSnapshot, the source-side ZFS retention, from
+#     running afterward).
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 echo "borg $*" >> "$MOCK_LOG"
 if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
@@ -33,6 +39,15 @@ if [ "$1" = "init" ] && [ -n "${MOCK_BORG_FAIL_INIT_REPO:-}" ]; then
     case "$arg" in
       "${MOCK_BORG_FAIL_INIT_REPO}"*)
         echo "$arg: Permission denied (mock fault injection)" >&2
+        exit 1 ;;
+    esac
+  done
+fi
+if [ "$1" = "prune" ] && [ -n "${MOCK_BORG_FAIL_PRUNE_REPO:-}" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      "${MOCK_BORG_FAIL_PRUNE_REPO}"*)
+        echo "$arg: Connection timed out (mock fault injection)" >&2
         exit 1 ;;
     esac
   done

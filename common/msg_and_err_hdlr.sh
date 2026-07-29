@@ -107,7 +107,7 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
             "$@"  # Execute the command passed as arguments
             lexit_status="$?"  # noqa:unset - see comment above; carries the return value
             msg "DEBUG" "Error status is $lexit_status"
-            if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] && [ "$LASTFUNC" != "initBorg" ] ; then
+            if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] && [ "$LASTFUNC" != "initBorg" ] && [ "$LASTFUNC" != "pruneBorg" ] ; then
                 IFS="$exec_cmd_OLD_IFS"
                 err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
