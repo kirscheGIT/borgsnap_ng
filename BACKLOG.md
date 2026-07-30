@@ -50,3 +50,28 @@ the incremental send and letting ZFS reject it.
 times on the same day for the same interval - normal, once-daily
 production operation via the timer never hits it. Revisit if it turns
 out to matter more in practice than expected.
+
+## LOCAL_READABLE_BY_OTHERS is logged, not enforced
+
+**What happens:** the config option exists, gets read and logged, but
+nothing actually changes local repo directory permissions based on it
+(see `TODO #28` in `sample.conf`).
+
+**Why deferred:** deliberate - enforcing this correctly (recursively,
+without loosening anything the user didn't ask for, without racing
+against borg's own file creation) needs more care than a quick `chmod`.
+Revisit when there's a concrete need.
+
+## PRE_SCRIPT / POST_SCRIPT are validated, not executed
+
+**What happens:** both config options are checked at load time (must
+exist, must be executable) but are never actually invoked anywhere in
+the backup flow.
+
+**Why deferred:** the design questions haven't been settled yet - should
+PRE_SCRIPT run once globally or per dataset, right before that dataset's
+own snapshot (the "as early as possible" design discussed but not
+finalized)? What should happen if a hook itself fails - abort the whole
+run, skip just that dataset, or just warn and continue? Revisit once
+there's a concrete use case (e.g. flushing an application before the
+snapshot) driving the actual requirements.

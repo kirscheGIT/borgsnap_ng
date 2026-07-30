@@ -94,16 +94,25 @@ your data.
 git clone <this repo>
 cd borgsnap_ng
 sudo ./install.sh
+sudo ./setup-backup.sh
 ```
 
-Copies borgsnap_ng to `/usr/local/bin/borgsnap_ng` (override with
-`--install-dir=PATH`), and on request creates the dedicated `borg` system
-user with its least-privilege sudo/tmpfiles setup, plus the systemd unit
-templates. Run `./install.sh --help` for all options, or `--dry-run` to
-preview without changing anything. This does not create a specific
-backup configuration or ZFS delegation for your own datasets - see
-`sample.conf` and `ops/least-privilege/setup-zfs-allow.sh` for that next
-step.
+`install.sh` copies borgsnap_ng to `/usr/local/bin/borgsnap_ng` (override
+with `--install-dir=PATH`), and on request creates the dedicated `borg`
+system user with its least-privilege sudo/tmpfiles setup, plus the
+systemd unit templates. Run `./install.sh --help` for all options, or
+`--dry-run` to preview without changing anything.
+
+`setup-backup.sh` then walks through configuring one actual backup job:
+the user (if you skipped that in install.sh), the destination(s) - local
+borg, remote borg (including SSH key setup if needed), zfssend, or a mix
+- the source ZFS dataset, retention, verification, encryption
+passphrase, ZFS delegation for that dataset, and finally registers and
+enables a systemd timer for it. Run it again for each additional backup
+job/dataset you want. It's fully interactive by design - `--dry-run`
+previews without changing anything, but there's no non-interactive mode,
+since the whole point is walking through the interdependent choices
+rather than skipping straight to flags.
 
 ### Manual / older instructions
 
