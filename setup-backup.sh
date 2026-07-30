@@ -192,10 +192,28 @@ if [ "$USE_REMOTE_BORG" -eq 1 ]; then
     fi
     if [ -n "$EXISTING_HOSTS" ]; then
         echo "Existing SSH Host aliases found in $SSH_CONFIG:"
-        echo "$EXISTING_HOSTS" | sed 's/^/  - /'
-        if ask_yes_no "Use one of these?" "y"; then
-            SSH_ALIAS=$(ask "Which alias" "")
-        fi
+        EXISTING_HOST_ARRAY=()
+        while IFS= read -r h; do
+            [ -n "$h" ] && EXISTING_HOST_ARRAY+=("$h")
+        done <<< "$EXISTING_HOSTS"
+        i=1
+        for h in "${EXISTING_HOST_ARRAY[@]}"; do
+            echo "  $i) $h"
+            i=$((i + 1))
+        done
+        echo "  n) set up a new target"
+        HOST_CHOICE=$(ask "Pick a number, or 'n' for a new target" "n")
+        case "$HOST_CHOICE" in
+            ''|*[!0-9]*) : ;;  # not purely numeric ("n" or anything else) - fall through to "new"
+            *)
+                HOST_CHOICE_IDX=$((HOST_CHOICE - 1))
+                if [ "$HOST_CHOICE_IDX" -ge 0 ] && [ "$HOST_CHOICE_IDX" -lt "${#EXISTING_HOST_ARRAY[@]}" ]; then
+                    SSH_ALIAS="${EXISTING_HOST_ARRAY[$HOST_CHOICE_IDX]}"
+                else
+                    echo "No host #$HOST_CHOICE - setting up a new one instead."
+                fi
+                ;;
+        esac
     else
         echo "No existing SSH config found for '$BACKUP_USER' at $SSH_CONFIG."
     fi
@@ -252,18 +270,21 @@ if [ "$USE_REMOTE_BORG" -eq 1 ]; then
     REMOTE_BORG_CMD=$(ask "Remote borg binary name (leave empty for default 'borg')" "")
 
     section "Step 6/13: reachability check"
-    echo "Checking SSH connectivity to '$SSH_ALIAS'..."
+    echo "Checking SSH connectivity to '$SSH_ALIAS' as user '$BACKUP_USER'..."
+    echo "If this is the first connection to this host, you'll be asked to"
+    echo "confirm its fingerprint - verify it against the provider's own"
+    echo "documentation before accepting."
     if [ "$DRY_RUN" -eq 0 ]; then
-        if ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_ALIAS" true 2>/dev/null; then
+        if sudo -u "$BACKUP_USER" ssh -o ConnectTimeout=10 "$SSH_ALIAS" true; then
             echo "SSH connection to '$SSH_ALIAS' succeeded."
         else
-            echo "WARNING: could not reach '$SSH_ALIAS' over SSH." >&2
+            echo "WARNING: could not reach '$SSH_ALIAS' over SSH as '$BACKUP_USER'." >&2
             if ! ask_yes_no "Continue anyway?" "n"; then
                 exit 1
             fi
         fi
     else
-        echo "+ (dry run) would check: ssh -o BatchMode=yes $SSH_ALIAS true"
+        echo "+ (dry run) would check: sudo -u $BACKUP_USER ssh $SSH_ALIAS true"
     fi
 
     if [ "$IS_BORGBASE" -eq 1 ]; then
@@ -294,15 +315,38 @@ fi
 # Step 7: source dataset, recursion, ZFS check
 # ===========================================================================
 section "Step 7/13: source ZFS dataset"
+if ! command -v zfs >/dev/null 2>&1; then
+    echo "setup-backup.sh: 'zfs' command not found on this system - can't list or verify datasets." >&2
+    exit 1
+fi
+ZFS_DATASETS=()
+while IFS= read -r d; do
+    [ -n "$d" ] && ZFS_DATASETS+=("$d")
+done < <(zfs list -H -o name 2>/dev/null)
+if [ "${#ZFS_DATASETS[@]}" -gt 0 ]; then
+    echo "Available ZFS datasets:"
+    i=1
+    for d in "${ZFS_DATASETS[@]}"; do
+        echo "  $i) $d"
+        i=$((i + 1))
+    done
+else
+    echo "(no existing ZFS datasets found to list - type the name directly)"
+fi
 while :; do
-    SOURCE_DATASET=$(ask "ZFS dataset to back up (e.g. tank/data)" "")
+    SOURCE_DATASET=$(ask "Dataset to back up (number from the list above, or type a name)" "")
+    case "$SOURCE_DATASET" in
+        ''|*[!0-9]*) : ;;  # not purely numeric - treat as a typed dataset name
+        *)
+            SOURCE_DATASET_IDX=$((SOURCE_DATASET - 1))
+            if [ "$SOURCE_DATASET_IDX" -ge 0 ] && [ "$SOURCE_DATASET_IDX" -lt "${#ZFS_DATASETS[@]}" ]; then
+                SOURCE_DATASET="${ZFS_DATASETS[$SOURCE_DATASET_IDX]}"
+            fi
+            ;;
+    esac
     if [ -z "$SOURCE_DATASET" ]; then
         echo "Can't be empty."
         continue
-    fi
-    if ! command -v zfs >/dev/null 2>&1; then
-        echo "setup-backup.sh: 'zfs' command not found on this system - can't verify '$SOURCE_DATASET' is a real ZFS dataset." >&2
-        exit 1
     fi
     if zfs list "$SOURCE_DATASET" >/dev/null 2>&1; then
         echo "'$SOURCE_DATASET' is a valid ZFS dataset."
@@ -355,12 +399,33 @@ RETENTIONPERIOD=$(ask "RETENTIONPERIOD (interval,keep pairs)" "monthly,1;weekly,
 section "Step 12/13: verification"
 echo "BORG_VERIFY checks stored-byte integrity (borg check). Depths:"
 echo "  off / repo (cheap) / archive / data (most thorough, most expensive)"
-BORG_VERIFY_DEPTH=$(ask "Default BORG_VERIFY depth for every interval" "repo")
-case "$BORG_VERIFY_DEPTH" in
-    off|repo|archive|data) : ;;
-    *) echo "Unrecognized depth '$BORG_VERIFY_DEPTH' - using 'repo'."; BORG_VERIFY_DEPTH="repo" ;;
-esac
-BORG_VERIFY="default:${BORG_VERIFY_DEPTH}"
+if ask_yes_no "Use the same depth for every interval?" "y"; then
+    BORG_VERIFY_DEPTH=$(ask "BORG_VERIFY depth for every interval" "repo")
+    case "$BORG_VERIFY_DEPTH" in
+        off|repo|archive|data) : ;;
+        *) echo "Unrecognized depth '$BORG_VERIFY_DEPTH' - using 'repo'."; BORG_VERIFY_DEPTH="repo" ;;
+    esac
+    BORG_VERIFY="default:${BORG_VERIFY_DEPTH}"
+else
+    echo "Enter a depth for each interval configured in RETENTIONPERIOD"
+    echo "('$RETENTIONPERIOD')."
+    BORG_VERIFY=""
+    IFS=';' read -r -a INTERVAL_PARTS <<< "$RETENTIONPERIOD"
+    for part in "${INTERVAL_PARTS[@]}"; do
+        INTERVAL_NAME="${part%%,*}"
+        [ -z "$INTERVAL_NAME" ] && continue
+        INTERVAL_DEPTH=$(ask "BORG_VERIFY depth for '$INTERVAL_NAME'" "repo")
+        case "$INTERVAL_DEPTH" in
+            off|repo|archive|data) : ;;
+            *) echo "Unrecognized depth '$INTERVAL_DEPTH' for '$INTERVAL_NAME' - using 'repo'."; INTERVAL_DEPTH="repo" ;;
+        esac
+        BORG_VERIFY="${BORG_VERIFY}${INTERVAL_NAME}:${INTERVAL_DEPTH};"
+    done
+    # A "default:" fallback matters here too - it's what covers any
+    # interval added to RETENTIONPERIOD later without also remembering to
+    # add it here (see sample.conf's own BORG_VERIFY comments for why).
+    BORG_VERIFY="${BORG_VERIFY}default:off"
+fi
 
 RESTORE_VERIFY=""
 echo ""
@@ -370,6 +435,38 @@ echo "live dataset's own mountpoint, the one exception to this project's"
 echo "usual read-only approach."
 if ask_yes_no "Enable RESTORE_VERIFY?" "n"; then
     RESTORE_VERIFY="default:on"
+    CANARY_MOUNTPOINT=$(zfs get -H -o value mountpoint "$SOURCE_DATASET" 2>/dev/null)
+    if [ -z "$CANARY_MOUNTPOINT" ] || [ "$CANARY_MOUNTPOINT" = "none" ] || [ "$CANARY_MOUNTPOINT" = "legacy" ]; then
+        echo "WARNING: could not determine a real mountpoint for '$SOURCE_DATASET'" >&2
+        echo "  (got '$CANARY_MOUNTPOINT') - can't check/fix canary file write" >&2
+        echo "  access automatically. You may need to grant it by hand." >&2
+    else
+        CANARY_FILE="$CANARY_MOUNTPOINT/.borgsnap_ng_canary"
+        if [ "$DRY_RUN" -eq 0 ] && sudo -u "$BACKUP_USER" test -w "$CANARY_FILE" 2>/dev/null; then
+            echo "'$BACKUP_USER' can already write to '$CANARY_FILE' - nothing more to do."
+        elif [ "$DRY_RUN" -eq 0 ] && [ ! -e "$CANARY_FILE" ] && sudo -u "$BACKUP_USER" test -w "$CANARY_MOUNTPOINT" 2>/dev/null; then
+            echo "'$BACKUP_USER' can already write to '$CANARY_MOUNTPOINT' - nothing more to do."
+        else
+            echo ""
+            echo "'$BACKUP_USER' currently can't write '$CANARY_FILE'."
+            echo "This is a deliberate trade-off, worth pausing on: broader write"
+            echo "access on a live dataset - even to just one file - is a step away"
+            echo "from this project's usual least-privilege, read-only design, but"
+            echo "RESTORE_VERIFY genuinely can't function without it."
+            if ask_yes_no "Pre-create that one file now, owned by '$BACKUP_USER' (nothing else about '$CANARY_MOUNTPOINT' changes)?" "y"; then
+                run touch "$CANARY_FILE"
+                run chown "$BACKUP_USER" "$CANARY_FILE"
+                run chmod 600 "$CANARY_FILE"
+                echo "Done - writing to an EXISTING file only needs permission on the"
+                echo "file itself, not the containing directory, so '$BACKUP_USER' can"
+                echo "now rewrite this one file's contents every run without any"
+                echo "broader access to '$CANARY_MOUNTPOINT'."
+            else
+                echo "Skipping - RESTORE_VERIFY will log a permission warning and skip"
+                echo "itself at runtime until this is granted by hand."
+            fi
+        fi
+    fi
 fi
 
 # ===========================================================================
@@ -383,7 +480,12 @@ CONFIG_FILE="$INSTALL_DIR/${CONFIG_NAME}.conf"
 if [ -f "$KEY_FILE" ]; then
     echo "Key file $KEY_FILE already exists - reusing it, not overwriting."
 else
-    if ask_yes_no "Generate a random passphrase automatically (recommended)?" "y"; then
+    echo "If you're reusing an EXISTING repo - e.g. a BorgBase repo you"
+    echo "already initialized with its own passphrase in an earlier setup -"
+    echo "answer 'n' below and enter that SAME passphrase manually. A"
+    echo "randomly generated one will not match, making the existing"
+    echo "archives unreadable."
+    if ask_yes_no "Generate a random passphrase automatically (only for a brand-new repo)?" "y"; then
         PASSPHRASE=$(openssl rand -base64 32)
     else
         while :; do
