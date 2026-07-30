@@ -122,7 +122,10 @@ if id "$BACKUP_USER" >/dev/null 2>&1; then
 else
     echo "User '$BACKUP_USER' doesn't exist yet."
     if ask_yes_no "Create it now (system account, real home directory, bash shell)?" "y"; then
-        run useradd --system --create-home --home-dir "/home/$BACKUP_USER" --shell /bin/bash "$BACKUP_USER"
+        if ! run useradd --system --create-home --home-dir "/home/$BACKUP_USER" --shell /bin/bash "$BACKUP_USER"; then
+            echo "setup-backup.sh: useradd failed - can't continue without a working user." >&2
+            exit 1
+        fi
         USER_HOME="/home/$BACKUP_USER"
     else
         echo "setup-backup.sh: can't continue without a user that exists - aborting." >&2
@@ -142,8 +145,32 @@ USE_ZFSSEND=0
 ZFSSEND_TARGET=""
 if ask_yes_no "Use a zfssend target?" "n"; then
     USE_ZFSSEND=1
+    if command -v zfs >/dev/null 2>&1; then
+        ZFS_TARGET_CANDIDATES=()
+        while IFS= read -r d; do
+            [ -n "$d" ] && ZFS_TARGET_CANDIDATES+=("$d")
+        done < <(zfs list -H -o name 2>/dev/null)
+        if [ "${#ZFS_TARGET_CANDIDATES[@]}" -gt 0 ]; then
+            echo "Existing ZFS pools/datasets (pick one to use as-is, or as the base"
+            echo "for a new path underneath it - type that path instead of a number):"
+            i=1
+            for d in "${ZFS_TARGET_CANDIDATES[@]}"; do
+                echo "  $i) $d"
+                i=$((i + 1))
+            done
+        fi
+    fi
     while :; do
-        ZFSSEND_TARGET=$(ask "Target dataset (pool/dataset/path - no leading slash)" "")
+        ZFSSEND_TARGET=$(ask "Target dataset (number above, or a pool/dataset/path - existing or new, no leading slash)" "")
+        case "$ZFSSEND_TARGET" in
+            ''|*[!0-9]*) : ;;  # not purely numeric - treat as a typed path
+            *)
+                ZFSSEND_TARGET_IDX=$((ZFSSEND_TARGET - 1))
+                if [ "$ZFSSEND_TARGET_IDX" -ge 0 ] && [ "$ZFSSEND_TARGET_IDX" -lt "${#ZFS_TARGET_CANDIDATES[@]}" ]; then
+                    ZFSSEND_TARGET="${ZFS_TARGET_CANDIDATES[$ZFSSEND_TARGET_IDX]}"
+                fi
+                ;;
+        esac
         case "$ZFSSEND_TARGET" in
             /*)
                 echo "That starts with '/' - ZFS dataset paths look like 'pool/dataset/path', not a filesystem path. Try again." ;;
@@ -227,9 +254,12 @@ if [ "$USE_REMOTE_BORG" -eq 1 ]; then
         if [ -f "$SSH_KEYFILE" ]; then
             echo "Key file $SSH_KEYFILE already exists - reusing it."
         elif command -v ssh-keygen >/dev/null 2>&1; then
-            run sudo -u "$BACKUP_USER" mkdir -p "$USER_HOME/.ssh"
-            run chmod 700 "$USER_HOME/.ssh"
-            run sudo -u "$BACKUP_USER" ssh-keygen -t ed25519 -N "" -C "borgsnap_ng-${SSH_ALIAS}" -f "$SSH_KEYFILE"
+            if ! run sudo -u "$BACKUP_USER" mkdir -p "$USER_HOME/.ssh" || \
+               ! run chmod 700 "$USER_HOME/.ssh" || \
+               ! run sudo -u "$BACKUP_USER" ssh-keygen -t ed25519 -N "" -C "borgsnap_ng-${SSH_ALIAS}" -f "$SSH_KEYFILE"; then
+                echo "setup-backup.sh: setting up the SSH key failed - can't continue without one." >&2
+                exit 1
+            fi
         else
             echo "setup-backup.sh: 'ssh-keygen' not found - can't generate a key automatically." >&2
             echo "  Generate one yourself (as '$BACKUP_USER'): ssh-keygen -t ed25519 -f '$SSH_KEYFILE'" >&2
@@ -275,14 +305,29 @@ if [ "$USE_REMOTE_BORG" -eq 1 ]; then
     echo "confirm its fingerprint - verify it against the provider's own"
     echo "documentation before accepting."
     if [ "$DRY_RUN" -eq 0 ]; then
-        if sudo -u "$BACKUP_USER" ssh -o ConnectTimeout=10 "$SSH_ALIAS" true; then
-            echo "SSH connection to '$SSH_ALIAS' succeeded."
-        else
-            echo "WARNING: could not reach '$SSH_ALIAS' over SSH as '$BACKUP_USER'." >&2
+        SSH_CHECK_RC=0
+        sudo -u "$BACKUP_USER" ssh -o ConnectTimeout=10 "$SSH_ALIAS" true || SSH_CHECK_RC=$?
+        # SSH itself exits 255 specifically for a connection/authentication
+        # failure (unreachable host, rejected key, etc). Any OTHER nonzero
+        # exit means the connection and authentication succeeded, but the
+        # remote end couldn't run "true" - normal and expected for
+        # providers with a restricted, forced-command shell (BorgBase,
+        # some Hetzner/rsync.net setups) that reject arbitrary commands
+        # with something like "Command not found" - not a reachability
+        # problem at all.
+        if [ "$SSH_CHECK_RC" -eq 255 ]; then
+            echo "WARNING: could not reach '$SSH_ALIAS' over SSH as '$BACKUP_USER' (connection or authentication failed)." >&2
             if ! ask_yes_no "Continue anyway?" "n"; then
                 exit 1
             fi
+        else
+            echo "SSH connection to '$SSH_ALIAS' succeeded (connection and authentication OK)."
+            if [ "$SSH_CHECK_RC" -ne 0 ]; then
+                echo "(The remote end rejected the test command itself, exit $SSH_CHECK_RC -"
+                echo " expected for a restricted/forced-command shell; not a problem.)"
+            fi
         fi
+        unset SSH_CHECK_RC
     else
         echo "+ (dry run) would check: sudo -u $BACKUP_USER ssh $SSH_ALIAS true"
     fi
@@ -304,8 +349,9 @@ if [ "$USE_LOCAL_BORG" -eq 1 ]; then
         echo "Directory already exists."
     else
         if ask_yes_no "Directory doesn't exist yet - create it now?" "y"; then
-            run mkdir -p "$LOCAL_REPO_PATH"
-            run chown "$BACKUP_USER" "$LOCAL_REPO_PATH"
+            if ! run mkdir -p "$LOCAL_REPO_PATH" || ! run chown "$BACKUP_USER" "$LOCAL_REPO_PATH"; then
+                echo "setup-backup.sh: could not create/chown '$LOCAL_REPO_PATH' - create it by hand before running a backup." >&2
+            fi
         fi
     fi
     REPOLIST_ENTRIES="${REPOLIST_ENTRIES}${LOCAL_REPO_PATH}, ; "
@@ -454,13 +500,14 @@ if ask_yes_no "Enable RESTORE_VERIFY?" "n"; then
             echo "from this project's usual least-privilege, read-only design, but"
             echo "RESTORE_VERIFY genuinely can't function without it."
             if ask_yes_no "Pre-create that one file now, owned by '$BACKUP_USER' (nothing else about '$CANARY_MOUNTPOINT' changes)?" "y"; then
-                run touch "$CANARY_FILE"
-                run chown "$BACKUP_USER" "$CANARY_FILE"
-                run chmod 600 "$CANARY_FILE"
-                echo "Done - writing to an EXISTING file only needs permission on the"
-                echo "file itself, not the containing directory, so '$BACKUP_USER' can"
-                echo "now rewrite this one file's contents every run without any"
-                echo "broader access to '$CANARY_MOUNTPOINT'."
+                if ! run touch "$CANARY_FILE" || ! run chown "$BACKUP_USER" "$CANARY_FILE" || ! run chmod 600 "$CANARY_FILE"; then
+                    echo "setup-backup.sh: could not pre-create '$CANARY_FILE' - RESTORE_VERIFY will log its own permission warning and skip itself at runtime until this is granted by hand." >&2
+                else
+                    echo "Done - writing to an EXISTING file only needs permission on the"
+                    echo "file itself, not the containing directory, so '$BACKUP_USER' can"
+                    echo "now rewrite this one file's contents every run without any"
+                    echo "broader access to '$CANARY_MOUNTPOINT'."
+                fi
             else
                 echo "Skipping - RESTORE_VERIFY will log a permission warning and skip"
                 echo "itself at runtime until this is granted by hand."
@@ -549,11 +596,21 @@ section "ZFS delegation"
 ZFS_ALLOW_SCRIPT="$INSTALL_DIR/ops/least-privilege/setup-zfs-allow.sh"
 if [ -x "$ZFS_ALLOW_SCRIPT" ]; then
     if ask_yes_no "Delegate ZFS access on '$SOURCE_DATASET' to '$BACKUP_USER' now?" "y"; then
-        run "$ZFS_ALLOW_SCRIPT" source "$BACKUP_USER" "$SOURCE_DATASET"
+        if ! run "$ZFS_ALLOW_SCRIPT" source "$BACKUP_USER" "$SOURCE_DATASET"; then
+            echo "setup-backup.sh: delegating source access failed - the config file" >&2
+            echo "  is still written and usable, but the backup will fail at runtime" >&2
+            echo "  until this is granted. Run it by hand:" >&2
+            echo "    sudo $ZFS_ALLOW_SCRIPT source $BACKUP_USER $SOURCE_DATASET" >&2
+        fi
     fi
     if [ "$USE_ZFSSEND" -eq 1 ]; then
         if ask_yes_no "Delegate ZFS access on the zfssend target ('$ZFSSEND_TARGET') to '$BACKUP_USER' now?" "y"; then
-            run "$ZFS_ALLOW_SCRIPT" target "$BACKUP_USER" "$ZFSSEND_TARGET"
+            if ! run "$ZFS_ALLOW_SCRIPT" target "$BACKUP_USER" "$ZFSSEND_TARGET"; then
+                echo "setup-backup.sh: delegating target access failed - the config file" >&2
+                echo "  is still written and usable, but zfssend will fail at runtime" >&2
+                echo "  until this is granted. Run it by hand:" >&2
+                echo "    sudo $ZFS_ALLOW_SCRIPT target $BACKUP_USER $ZFSSEND_TARGET" >&2
+            fi
         fi
     fi
 else
@@ -575,7 +632,7 @@ if command -v systemctl >/dev/null 2>&1; then
         SCHEDULE=$(ask "OnCalendar schedule for this config" "*-*-* 02:00:00")
         DROPIN_DIR="/etc/systemd/system/borgsnap-ng@${CONFIG_NAME}.timer.d"
         if [ "$SCHEDULE" != "*-*-* 02:00:00" ]; then
-            run mkdir -p "$DROPIN_DIR"
+            run mkdir -p "$DROPIN_DIR" || echo "setup-backup.sh: could not create '$DROPIN_DIR' - the default schedule will be used instead until this is fixed by hand." >&2
             if [ "$DRY_RUN" -eq 0 ]; then
                 cat > "$DROPIN_DIR/override.conf" << TIMEREOF
 [Timer]
