@@ -9,7 +9,13 @@ feed local borg repositories, remote borg repositories (including
 all driven by one interval-based retention scheme, with restore-path
 verification built in rather than assumed.
 
-
+*rsync.net, Hetzner, and BorgBase are mentioned purely as concrete,
+real-world examples this project has actually been tested against - not
+as an endorsement, sponsorship, or partnership. I receive no
+compensation, discount, affiliate commission, or other benefit of any
+kind from any of them, or from any other provider. Any SSH-reachable
+host running borg (or offering BorgBase-style access) works the same
+way; these just happen to be what was used for testing.*
 
 ## Key features over the original borgsnap
 
