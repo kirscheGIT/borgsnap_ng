@@ -351,6 +351,20 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         if [ "$ensureBorgInit_listrc" -eq 0 ]; then
             msg "DEBUG" "repo '$ensureBorgInit_repo' already initialized"
+        elif [ "$ensureBorgInit_listrc" -eq 52 ]; then
+            # borg's own PassphraseWrong (see Message IDs in its docs) -
+            # unlike other unexpected codes below, attempting init here
+            # would never help: a wrong passphrase means init would just
+            # fail too, so don't bother trying, and be specific about
+            # what's actually wrong instead of falling through to the
+            # generic "not yet a valid repository, trying init" message.
+            unset ensureBorgInit_CALLINGFUCNTION
+            unset ensureBorgInit_remotecmd
+            unset ensureBorgInit_encryption
+            unset ensureBorgInit_remotepath
+            unset ensureBorgInit_listcmd
+            unset ensureBorgInit_listrc
+            die "repo '$ensureBorgInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52). This repo already has its own encryption passphrase from when it was first initialized - if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one."
         else
             # Deliberately not trying to distinguish every possible exit
             # code here (unlike ensureBorgBaseInit, which can afford to
@@ -453,6 +467,15 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 unset ensureBorgBaseInit_listcmd
                 unset ensureBorgBaseInit_listrc
                 die "borgbase repo '$ensureBorgBaseInit_repo' does not exist. BorgBase repos must be created via their web UI first - filesystem operations (mkdir etc.) aren't possible over their restricted SSH access, so this can't be created automatically. Check the path and that the repo exists in your BorgBase dashboard."
+                ;;
+            52)
+                unset ensureBorgBaseInit_CALLINGFUCNTION
+                unset ensureBorgBaseInit_remotecmd
+                unset ensureBorgBaseInit_encryption
+                unset ensureBorgBaseInit_remotepath
+                unset ensureBorgBaseInit_listcmd
+                unset ensureBorgBaseInit_listrc
+                die "borgbase repo '$ensureBorgBaseInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52). This repo already has its own encryption passphrase from when it was first initialized - if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one."
                 ;;
             *)
                 unset ensureBorgBaseInit_CALLINGFUCNTION

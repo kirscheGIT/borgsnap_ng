@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.38
+# TESTKIT_VERSION=2026-07-20.39
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -2173,6 +2173,72 @@ sh ./borgsnap_ng.sh run "$WORKDIR28/test28-existingdir.conf" > "$WORKDIR28/run_s
 RC_SECOND=$?
 assert "FIX69: second run against the now-real repo succeeds" "[ $RC_SECOND -eq 0 ]"
 assert "FIX69: second run does not attempt init again" "! grep -q '^borg init' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "Wrong-passphrase repo (rc 52) gets a clear, specific message (FIX #70)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: reusing an existing BorgBase repo
+# (already initialized in an earlier setup with its own passphrase)
+# against a config whose PASS points to a different (e.g. freshly
+# generated) passphrase - borg's own "borg list" correctly rejects this
+# with rc 52 (PassphraseWrong per borg's Message IDs docs), but this used
+# to fall through to a generic "unexpected error... check your client's
+# borg version" message that didn't name the actual, common problem.
+WORKDIR29="$(mktemp -d)"
+mkdir -p "$WORKDIR29/repo1"
+MAILKEYFILE29="$WORKDIR29/test29.key"; echo "testpassphrase" > "$MAILKEYFILE29"; chmod 600 "$MAILKEYFILE29"
+
+cat > "$WORKDIR29/test29-borgbase.conf" << EOF48
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE29"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borgbase:ssh://borgbase_repo/./repo, borg, repokey-blake2"
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF48
+chmod 600 "$WORKDIR29/test29-borgbase.conf"
+export MOCK_LOG="$WORKDIR29/mock.log"
+export MOCK_STATE="$WORKDIR29/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR29/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=52 sh ./borgsnap_ng.sh run "$WORKDIR29/test29-borgbase.conf" > "$WORKDIR29/run_borgbase.log" 2>&1
+RC_BORGBASE52=$?
+assert "FIX70: BorgBase wrong-passphrase run fails clearly (nonzero exit)" "[ $RC_BORGBASE52 -ne 0 ]"
+assert "FIX70: BorgBase wrong-passphrase message names the actual problem, not 'unexpectedly'" \
+  "grep -q 'rejected the configured passphrase' '$WORKDIR29/run_borgbase.log'"
+assert "FIX70: BorgBase wrong-passphrase message does not fall back to the generic wording" \
+  "! grep -q 'check failed unexpectedly' '$WORKDIR29/run_borgbase.log'"
+
+cat > "$WORKDIR29/test29-generic.conf" << EOF49
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE29"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR29/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF49
+chmod 600 "$WORKDIR29/test29-generic.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=52 sh ./borgsnap_ng.sh run "$WORKDIR29/test29-generic.conf" > "$WORKDIR29/run_generic.log" 2>&1
+RC_GENERIC52=$?
+assert "FIX70: generic-repo wrong-passphrase run fails clearly (nonzero exit)" "[ $RC_GENERIC52 -ne 0 ]"
+assert "FIX70: generic-repo wrong-passphrase message names the actual problem" \
+  "grep -q 'rejected the configured passphrase' '$WORKDIR29/run_generic.log'"
+assert "FIX70: generic-repo wrong-passphrase does not attempt a pointless init" \
+  "! grep -q '^borg init' '$MOCK_LOG'"
 
 
 echo "-------------------------------------"
