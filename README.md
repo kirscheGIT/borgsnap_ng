@@ -2,10 +2,14 @@
 
 A POSIX-shell fork of [borgsnap](https://github.com/jortan/borgsnap) for
 automated ZFS + [Borg](https://www.borgbackup.org/) backups: ZFS snapshots
-feed local borg repositories, remote borg repositories (including
+feed local borg repositories, remote borg repositories (including 
+[rsync.net](https://www.rsync.net/products/borg.html),
+[Hetzner storagebox](https://www.hetzner.com/de/storage/storage-box/),  
 [BorgBase](https://www.borgbase.com/)), and/or plain `zfs send` targets,
 all driven by one interval-based retention scheme, with restore-path
 verification built in rather than assumed.
+
+
 
 ## Key features over the original borgsnap
 
