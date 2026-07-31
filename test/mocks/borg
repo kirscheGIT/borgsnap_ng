@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.35
+# TESTKIT_VERSION=2026-07-20.36
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
@@ -40,6 +40,23 @@ if [ "$1" = "init" ] && [ -n "${MOCK_BORG_FAIL_INIT_REPO:-}" ]; then
       "${MOCK_BORG_FAIL_INIT_REPO}"*)
         echo "$arg: Permission denied (mock fault injection)" >&2
         exit 1 ;;
+    esac
+  done
+fi
+if [ "$1" = "prune" ]; then
+  # Real borg only recognizes a fixed set of --keep-X flags - anything
+  # else is rejected with "unrecognized arguments". Catches bugs like a
+  # SNAPSHOT_TAG (or similar) leaking into the flag name itself (e.g.
+  # "--keep-usb-monthly" instead of "--keep-monthly") that a mock which
+  # only logs whatever it's given, without validating it, would
+  # otherwise silently let through.
+  for arg in "$@"; do
+    case "$arg" in
+      --keep-secondly=*|--keep-minutely=*|--keep-hourly=*|--keep-daily=*|--keep-weekly=*|--keep-monthly=*|--keep-yearly=*|--keep-within=*)
+        : ;;
+      --keep-*)
+        echo "borg: error: unrecognized arguments: $arg" >&2
+        exit 2 ;;
     esac
   done
 fi

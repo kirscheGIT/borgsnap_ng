@@ -160,6 +160,17 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             done
             # [ ] TODO #4 Pre and post scripts for the snapshots
 
+            # FIX #67: the bare interval name, stripped of both the date
+            # suffix AND (if SNAPSHOT_TAG is set) the tag prefix that's
+            # now part of $strtBckpMchn_label - needed everywhere below
+            # that looks something up BY interval name (RESTORE_VERIFY/
+            # BORG_VERIFY's "interval:depth" entries, borg prune's
+            # --keep-X flag) rather than matching the ZFS snapshot label
+            # itself. Computed once here and reused, instead of repeating
+            # (and risking missing) the same stripping logic in each spot.
+            strtBckpMchn_bareinterval="${strtBckpMchn_label%-*}"
+            strtBckpMchn_bareinterval="${strtBckpMchn_bareinterval#"${SNAPSHOT_TAG:+${SNAPSHOT_TAG}-}"}"
+
             # RESTORE_VERIFY: determine on/off for today's interval, same
             # default: fallback mechanism as BORG_VERIFY. Must happen HERE
             # - before the snapshot below - because if enabled, a fresh
@@ -173,7 +184,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 for strtBckpMchn_rverify_entry in $RESTORE_VERIFY; do
                     IFS=' '
                     case "$strtBckpMchn_rverify_entry" in
-                        "${strtBckpMchn_label%-*}:"*)
+                        "${strtBckpMchn_bareinterval}:"*)
                             strtBckpMchn_restoreverify="${strtBckpMchn_rverify_entry#*:}"
                             ;;
                         "default:"*)
@@ -277,7 +288,19 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             # FIX #33: glob must also match the dataset slug now that it's
             # part of the archive name, otherwise prune would consider every
             # dataset's archives together instead of scoping to this one.
-            strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_label%-*}=$strtBckpMchn_keepduration --glob-archives '$strtBckpMchn_dataslug-${strtBckpMchn_label%-*}-*'"
+            # FIX #67: --keep-X only recognizes the fixed flag names
+            # --keep-monthly/--keep-weekly/--keep-daily - with a
+            # SNAPSHOT_TAG set, $strtBckpMchn_label is "TAG-monthly-DATE",
+            # and stripping just the date (as --glob-archives still does,
+            # correctly) left "TAG-monthly" here, which borg rejected as
+            # an unrecognized argument. $strtBckpMchn_bareinterval (see
+            # above, right after the interval-selection loop) is the tag-
+            # and date-stripped interval name, used for exactly this.
+            # --glob-archives is unaffected since it's plain glob string
+            # matching, not a restricted vocabulary, and keeping the tag
+            # there is actually more precise (scopes pruning to just this
+            # tool's own tagged archives).
+            strtBckpMchn_pruneopts="$strtBckpMchn_borgpurgeopts --keep-${strtBckpMchn_bareinterval}=$strtBckpMchn_keepduration --glob-archives '$strtBckpMchn_dataslug-${strtBckpMchn_label%-*}-*'"
 
             # BORG_VERIFY: look up this interval's configured "borg check"
             # depth once, here - not per repo below, since it depends only
@@ -298,7 +321,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                 for strtBckpMchn_verify_entry in $BORG_VERIFY; do
                     IFS=' '
                     case "$strtBckpMchn_verify_entry" in
-                        "${strtBckpMchn_label%-*}:"*)
+                        "${strtBckpMchn_bareinterval}:"*)
                             strtBckpMchn_verifydepth="${strtBckpMchn_verify_entry#*:}"
                             ;;
                         "default:"*)
@@ -419,6 +442,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_borgpurgeopts
         unset strtBckpMchn_snapmountbasedir
         unset strtBckpMchn_label
+        unset strtBckpMchn_bareinterval
         unset strtBckpMchn_dataslug
         unset strtBckpMchn_borglabel
         unset strtBckpMchn_pruneopts

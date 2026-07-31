@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.35
+# TESTKIT_VERSION=2026-07-20.36
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1922,6 +1922,8 @@ RC_TAGGED=$?
 assert "SNAPSHOT_TAG: run succeeds" "[ $RC_TAGGED -eq 0 ]"
 assert "SNAPSHOT_TAG: the snapshot label is tag-prefixed (usb-daily-...)" \
   "grep -q 'usb-daily-2026' '$MOCK_LOG'"
+assert "FIX67: borg prune itself succeeds - --keep-X uses the bare interval name, not tag-prefixed" \
+  "! grep -q 'borg prune failed\\|unrecognized arguments' '$WORKDIR26/run_tagged.log'"
 
 # Scenario A2: pruneZFSSnapshot's own counting/matching must be
 # tag-aware too - it derives the bare interval name from the full label
@@ -2031,6 +2033,49 @@ RC_INVALIDTAG=$?
 assert "SNAPSHOT_TAG: a value with a hyphen is rejected, not silently accepted" "[ $RC_INVALIDTAG -ne 0 ]"
 assert "SNAPSHOT_TAG: the rejection message names the actual problem" \
   "grep -q \"invalid value 'usb-1'\" '$WORKDIR26/run_invalid.log'"
+
+# Scenario D: RESTORE_VERIFY/BORG_VERIFY's per-interval matching (not
+# the "default:" fallback) must also correctly use the bare interval
+# name with a tag set - the same bug class as FIX #67's --keep-X issue,
+# just in the interval:depth lookup instead of the prune flag name.
+# Specifically targets "daily:" (not "default:") in both settings, so
+# a regression here would show up as BOTH falling back to their
+# defaults (off) instead of actually applying.
+WORKDIR26C="$(mktemp -d)"
+mkdir -p "$WORKDIR26C/repo1"
+MAILKEYFILE26C="$WORKDIR26C/test26c.key"; echo "testpassphrase" > "$MAILKEYFILE26C"; chmod 600 "$MAILKEYFILE26C"
+cat > "$WORKDIR26C/test26c-verify.conf" << EOF45
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE26C"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR26C/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+SNAPSHOT_TAG="usb"
+BORG_VERIFY="daily:archive"
+RESTORE_VERIFY="daily:on"
+MSG_LEVEL=2
+EOF45
+chmod 600 "$WORKDIR26C/test26c-verify.conf"
+export MOCK_LOG="$WORKDIR26C/mock.log"
+export MOCK_STATE="$WORKDIR26C/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR26C/lock"
+export MOCK_ZFS_MOUNTBASE="$WORKDIR26C/mockmounts"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_EXTRACT_FILE="$WORKDIR26C/mockmounts/tank/data/.borgsnap_ng_canary" \
+  sh ./borgsnap_ng.sh run "$WORKDIR26C/test26c-verify.conf" > "$WORKDIR26C/run_verify.log" 2>&1
+RC_TAGVERIFY=$?
+assert "FIX67: per-interval BORG_VERIFY/RESTORE_VERIFY run succeeds with a tag set" "[ $RC_TAGVERIFY -eq 0 ]"
+assert "FIX67: the per-interval BORG_VERIFY entry ('daily:archive') actually applied, not the off default" \
+  "grep -q 'borg check (depth: archive)' '$WORKDIR26C/run_verify.log'"
+assert "FIX67: the per-interval RESTORE_VERIFY entry ('daily:on') actually applied, not the off default" \
+  "grep -q 'restore verification passed' '$WORKDIR26C/run_verify.log'"
 
 
 echo "-------------------------------------"
