@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.14
+# TESTKIT_VERSION=2026-07-20.40
 # run-integration-check.sh
 #
 # Runs both validation steps discussed after the mock-only fixes:
@@ -27,7 +27,7 @@
 
 set -eu
 
-# TESTKIT_VERSION=2026-07-20.14
+# TESTKIT_VERSION=2026-07-20.40
 #
 # Preflight version check. This script, test/run_mock_test.sh, and
 # test/mocks/date are a matched set - a stale copy of any one of them
@@ -38,7 +38,7 @@ set -eu
 # from the local checkout (no VM involved yet) and refuses to proceed on any
 # mismatch, so staleness is caught in under a second instead of after a full
 # multi-minute run against two VMs.
-TESTKIT_VERSION="2026-07-20.14"
+TESTKIT_VERSION="2026-07-20.40"
 echo "run-integration-check.sh - TESTKIT_VERSION=$TESTKIT_VERSION"
 
 SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd -P)"
@@ -69,8 +69,10 @@ preflight_check_version "$REPO_ROOT/test/mocks/zfs" "test/mocks/zfs"
 preflight_check_version "$REPO_ROOT/test/mocks/zpool" "test/mocks/zpool"
 preflight_check_version "$REPO_ROOT/test/mocks/borg" "test/mocks/borg"
 preflight_check_version "$REPO_ROOT/test/mocks/sendmail" "test/mocks/sendmail"
+preflight_check_version "$REPO_ROOT/test/mocks/ssh" "test/mocks/ssh"
+preflight_check_version "$REPO_ROOT/test/mocks/mount" "test/mocks/mount"
 
-for mockbin in date zfs zpool borg sendmail; do
+for mockbin in date zfs zpool borg sendmail ssh mount; do
   if [ ! -x "$REPO_ROOT/test/mocks/$mockbin" ]; then
     echo "PREFLIGHT: test/mocks/$mockbin exists but is not executable (chmod +x test/mocks/$mockbin)" >&2
     preflight_fail=1
@@ -95,17 +97,59 @@ fi
 
 preflight_check_marker "borgsnap_ng.sh" "zfs_send_hdlr.sh"
 preflight_check_marker "borgsnap_ng.sh" "FIX #49"
+preflight_check_marker "borgsnap_ng.sh" "FIX #68"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #33"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #38"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #39"
 preflight_check_marker "backup/bckp_hdlr.sh" "FIX #41"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #41"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #50"
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #50"
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #55"
+preflight_check_marker "backup/bckp_hdlr.sh" "BORG_VERIFY"
+preflight_check_marker "borg/borg_hdlr.sh" "BORG_VERIFY"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #57"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #60"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #62"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #63"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #65"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #69"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #70"
+preflight_check_marker "borg/borg_hdlr.sh" "FIX #71"
+if [ ! -f "$REPO_ROOT/test/mocks/ssh" ]; then
+  echo "PREFLIGHT: test/mocks/ssh not found - this is a new file introduced by FIX #58, not just an update to an existing one" >&2
+  preflight_fail=1
+fi
+preflight_check_marker "cfg_file_hdlr.sh" "BORG_VERIFY"
+preflight_check_marker "cfg_file_hdlr.sh" "RESTORE_VERIFY"
+preflight_check_marker "cfg_file_hdlr.sh" "MSG_LEVEL"
+preflight_check_marker "cfg_file_hdlr.sh" "SNAPSHOT_TAG"
+preflight_check_marker "borg/borg_hdlr.sh" "checkRepoCapacity"
+preflight_check_marker "backup/bckp_hdlr.sh" "RESTORE_VERIFY"
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #64"
+preflight_check_marker "backup/bckp_hdlr.sh" "SNAPSHOT_TAG"
+preflight_check_marker "backup/bckp_hdlr.sh" "FIX #67"
+preflight_check_marker "borg/borg_hdlr.sh" "checkRestoreBorg"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "RESTOREVERIFY_ACTIVE"
+preflight_check_marker "mail_wrapper.sh" "PARTIAL FAILURE"
+if [ ! -f "$REPO_ROOT/test/mocks/borg" ]; then
+  echo "PREFLIGHT: test/mocks/borg not found" >&2
+  preflight_fail=1
+else
+  preflight_check_marker "test/mocks/borg" "MOCK_BORG_CHECK_RC"
+fi
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #41"
+preflight_check_marker "filesystem/zfs_snap_mount.sh" "FIX #52"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #42"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #43"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #44"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #45"
 preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #46"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #51"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #54"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #56"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "FIX #59"
+preflight_check_marker "filesystem/zfs_send_hdlr.sh" "CAPACITY_WARN_PERCENT"
 if [ ! -f "$REPO_ROOT/test/mocks/zpool" ]; then
   echo "PREFLIGHT: test/mocks/zpool not found - this is a new file introduced by FIX #46, not just an update to an existing one" >&2
   preflight_fail=1
@@ -123,8 +167,14 @@ if [ ! -f "$REPO_ROOT/test/mocks/sendmail" ]; then
 fi
 preflight_check_marker "cfg_file_hdlr.sh" "FIX #40"
 preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #35"
+preflight_check_marker "common/msg_and_err_hdlr.sh" "FIX #53"
+preflight_check_marker "common/msg_and_err_hdlr.sh" "initBorg"
+preflight_check_marker "common/msg_and_err_hdlr.sh" "pruneBorg"
+preflight_check_marker "common/dir_functions.sh" "FIX #58"
 preflight_check_marker "borg/borg_hdlr.sh" "FIX #36"
 preflight_check_marker "filesystem/zfs_hdlr.sh" "FIX #37"
+preflight_check_marker "filesystem/zfs_hdlr.sh" "FIX #64"
+preflight_check_marker "filesystem/zfs_hdlr.sh" "SNAPSHOT_TAG"
 
 if [ "$preflight_fail" -eq 1 ]; then
   echo "" >&2
@@ -242,6 +292,14 @@ if [ "$RUN_REAL" -eq 1 ]; then
         # --- 2. a real child dataset, to exercise the recursive path ---
         zfs list testpool/data/sub >/dev/null 2>&1 || zfs create testpool/data/sub
 
+        # FIX #52: a marker file directly in the PARENT dataset (not the
+        # child) - the bug this guards against silently mounted only
+        # child datasets in the recursive branch, never the top-level
+        # dataset itself, so its own files never made it into the borg
+        # archive at all. A marker in the child alone wouldn't catch that
+        # regression; it has to live in testpool/data directly.
+        echo fix52-parent-marker-content > /testpool/data/fix52-parent-marker.txt
+
         # --- 3. scratch dir: keyfile, two local repos ------------------
         # NOTE: do NOT pre-create repo1/repo2 here. borgsnap_ng.sh only
         # calls initBorg() when the repo directory does not already exist
@@ -332,6 +390,14 @@ CONF
           zfs list -t snapshot | grep 'testpool/data/sub@' && echo 'YES' || echo 'NO (recursive fix did not propagate!)'
           echo '--- borg archives, repo1 ---'
           BORG_PASSPHRASE=\$(cat '$REAL_TESTDIR/test.key') borg list '$REAL_TESTDIR/repo1' 2>&1
+          echo '--- FIX #52: does the archive actually contain the PARENT dataset file, not just the child? ---'
+          REAL_ARCHIVE=\$(BORG_PASSPHRASE=\$(cat '$REAL_TESTDIR/test.key') borg list --short '$REAL_TESTDIR/repo1' 2>/dev/null | grep testpool_data- | tail -1)
+          if BORG_PASSPHRASE=\$(cat '$REAL_TESTDIR/test.key') borg list \"$REAL_TESTDIR/repo1::\$REAL_ARCHIVE\" 2>&1 | grep -q fix52-parent-marker.txt; then
+            echo 'YES - parent file present'
+          else
+            echo 'NO - parent dataset content missing from archive!'
+            exit 1
+          fi
         "
         VERIFY_RC=$?
         set -e

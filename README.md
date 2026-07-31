@@ -87,6 +87,44 @@ forget to do remote backups, because a local backup isn't disaster proofing
 your data.
 
 ## borgsnap installation
+
+### Quick install (recommended)
+
+```
+git clone <this repo>
+cd borgsnap_ng
+sudo ./install.sh
+sudo ./setup-backup.sh
+```
+
+`install.sh` copies borgsnap_ng to `/usr/local/bin/borgsnap_ng` (override
+with `--install-dir=PATH`), and on request creates the dedicated `borg`
+system user with its least-privilege sudo/tmpfiles setup, plus the
+systemd unit templates. Run `./install.sh --help` for all options, or
+`--dry-run` to preview without changing anything. Safe to re-run on an
+existing install (e.g. for a version update) - it only touches the
+application files themselves, never any `.conf`/`.key` files already
+sitting in the same directory.
+
+`setup-backup.sh` then walks through configuring one actual backup job:
+the user (if you skipped that in install.sh), the destination(s) - local
+borg, remote borg (including SSH key setup if needed), zfssend, or a mix
+- the source ZFS dataset, retention, verification, encryption
+passphrase, ZFS delegation for that dataset, and finally registers and
+enables a systemd timer for it. Run it again for each additional backup
+job/dataset you want. It's fully interactive by design - `--dry-run`
+previews without changing anything, but there's no non-interactive mode,
+since the whole point is walking through the interdependent choices
+rather than skipping straight to flags.
+
+### Manual / older instructions
+
+The steps below predate `install.sh` and reference the original
+`borgsnap` project's config format (`FS=`, `LOCAL=`, `MONTH_KEEP=`, etc.),
+which no longer matches borgsnap_ng's actual `sample.conf` - kept here
+for now, pending a full rewrite, but prefer the Quick install above and
+`sample.conf`'s own inline documentation for anything current.
+
 ```
 git clone git@github.com:jortan/borgsnap.git
 ```
@@ -147,11 +185,18 @@ Borgsnap is pretty simple, it has the following basic flow:
   + Take a ZFS snapshot of the filesystem (recursively if enabled)
   + Run borg for the local output if configured
   + Run borg for the rsync.net output if configured
-  + Delete old ZFS snapshots (recursively if enabled)
+  + Delete old ZFS snapshots (exact dataset match only - see note below)
   + Prune local borg if configured and needed
   + Prune rsync.net borg if configured and needed
 
 That's it!
+
+Note: ZFS snapshot deletion/retention matches only the exact configured
+dataset, never its children - even if that dataset was snapshotted
+recursively. If you back up a dataset both recursively (as a parent) and
+separately as its own independent config entry for one of its children,
+see the warning next to `FS=` in `sample.conf` for a gotcha this creates
+with orphaned snapshots.
 
 If things fail, it is not currently re-entrant. For example, if a ZFS snapshot
 already exists for the day, the script will fail\*.  This could use a bit of
@@ -233,3 +278,9 @@ you:
 # borgwrapper /path/to/my/borgsnap.conf list /backup/borg/zroot/root
 [...]
 ```
+
+## Known limitations
+
+See [BACKLOG.md](BACKLOG.md) for understood, deliberately deferred
+edge cases and possible future improvements.
+

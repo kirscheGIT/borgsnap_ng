@@ -104,17 +104,36 @@ cat "$mailwrap_logfile"
 
 mailwrap_endtime="$(date '+%Y-%m-%d %H:%M:%S')"
 
-# Scan the captured log for WARNING: lines regardless of overall exit
-# code - msg() always writes these to stderr (which we already captured
-# above), so a checkFilePerms permission warning, for example, would
-# otherwise be buried unnoticed inside an ordinary SUCCESS email's log
-# dump, with no distinguishing subject or priority to catch attention.
+# Scan the captured log for WARNING: and ERROR: lines regardless of
+# overall exit code - msg() always writes these to stderr (which we
+# already captured above), so e.g. a checkFilePerms permission warning,
+# or one repo's createBorg/initBorg/backendZfsSend failure (which
+# deliberately doesn't abort the whole run - see FIX #36/#57/#59),
+# would otherwise be buried unnoticed inside an ordinary SUCCESS email's
+# log dump, with no distinguishing subject or priority to catch
+# attention.
 mailwrap_warning_lines=$(grep "WARNING:" "$mailwrap_logfile")
 mailwrap_warning_count=$(printf '%s\n' "$mailwrap_warning_lines" | grep -c "WARNING:")
 [ -z "$mailwrap_warning_lines" ] && mailwrap_warning_count=0
 
+mailwrap_error_lines=$(grep "ERROR:" "$mailwrap_logfile")
+mailwrap_error_count=$(printf '%s\n' "$mailwrap_error_lines" | grep -c "ERROR:")
+[ -z "$mailwrap_error_lines" ] && mailwrap_error_count=0
+
 if [ "$mailwrap_rc" -eq 0 ]; then
-    if [ "$mailwrap_warning_count" -gt 0 ]; then
+    if [ "$mailwrap_error_count" -gt 0 ]; then
+        # The run completed (individual repo failures don't abort it by
+        # design), but at least one ERROR: was logged along the way - e.g.
+        # a restore-verification mismatch, or one repo's init/create/send
+        # failing while others succeeded. Treat this with the same
+        # urgency as an outright FAILURE: something here needs a look,
+        # even though the process didn't consider it fatal enough to
+        # abort.
+        mailwrap_status="PARTIAL FAILURE"
+        mailwrap_priority_headers="X-Priority: 1 (Highest)
+Importance: High
+X-MSMail-Priority: High"
+    elif [ "$mailwrap_warning_count" -gt 0 ]; then
         mailwrap_status="SUCCESS (with warnings)"
         mailwrap_priority_headers="X-Priority: 2 (High)
 Importance: High"
@@ -143,6 +162,11 @@ mailwrap_subject="[borgsnap_ng] $mailwrap_status: $mailwrap_hostname / $mailwrap
     echo "Started:         $mailwrap_starttime"
     echo "Finished:        $mailwrap_endtime"
     echo "Exit code:       $mailwrap_rc"
+    if [ "$mailwrap_error_count" -gt 0 ]; then
+        echo ""
+        echo "--- $mailwrap_error_count error(s) detected (see full log below for context) ---"
+        printf '%s\n' "$mailwrap_error_lines"
+    fi
     if [ "$mailwrap_warning_count" -gt 0 ]; then
         echo ""
         echo "--- $mailwrap_warning_count warning(s) detected (see full log below for context) ---"

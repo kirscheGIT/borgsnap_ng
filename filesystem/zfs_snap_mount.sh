@@ -58,6 +58,22 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         export MOUNT_MANIFEST
         : > "$MOUNT_MANIFEST"
         if [ "$mountZFS_recursive" = "r" ] || [ "$mountZFS_recursive" = "R" ] ; then
+            # FIX #52: mount the top-level dataset itself first, always,
+            # unconditionally - regardless of whether it has children. This
+            # used to only happen implicitly via the loop below matching an
+            # empty-suffix entry for the top-level dataset's own snapshot -
+            # but "for R in $(...)" silently DROPS empty-string words
+            # during shell word-splitting, so that entry never actually
+            # reached the loop body, with or without children present.
+            # Only child datasets were ever actually mounted; the
+            # top-level dataset's own directory stayed empty the whole
+            # time, and Borg archived either nothing (no children at all)
+            # or only the child mountpoints (children present, but the
+            # parent's own files silently missing).
+            dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset"
+            exec_cmd sudo mount -t zfs "$mountZFS_dataset@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset"
+            echo "$mountZFS_snapmountbasedir/$mountZFS_dataset" >> "$MOUNT_MANIFEST"
+
             # FIX #37: capture zfs list's output once and check its exit
             # code, instead of piping exec_cmd directly into grep|sed inside
             # the command substitution. The pipe ran exec_cmd in a subshell,
@@ -75,6 +91,15 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
             IFS="$mountZFS_NL"
             for R in $(printf '%s\n' "$mountZFS_zfslist" | grep "@$mountZFS_label$" | sed -e "s@^$mountZFS_dataset@@" -e "s/@$mountZFS_label$//"); do
                 IFS=' '
+                # The top-level dataset's own (empty-suffix) entry never
+                # actually reaches here - word-splitting drops it, per
+                # FIX #52 above - but skip explicitly anyway rather than
+                # relying on that as the only guard, in case IFS or the
+                # sed output ever changes shape.
+                if [ -z "$R" ]; then
+                    IFS="$mountZFS_NL"
+                    continue
+                fi
                 msg "INFO" "Mounting child filesystem snapshot: $mountZFS_dataset$R@$mountZFS_label"
                 dircreate "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"
                 exec_cmd sudo mount -t zfs "$mountZFS_dataset$R@$mountZFS_label" "$mountZFS_snapmountbasedir/$mountZFS_dataset$R"

@@ -40,6 +40,9 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         dirExists_remotessh=""
         dirExists_chkpath=""
         dirExists_chkcmd=""
+        dirExists_isremote=0
+        dirExists_maxattempts=1
+        dirExists_attempt=1
 
         dirExists_OLD_IFS="$IFS"
         IFS=' '
@@ -52,6 +55,9 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             unset dirExists_remotessh
             unset dirExists_chkpath
             unset dirExists_chkcmd
+            unset dirExists_isremote
+            unset dirExists_maxattempts
+            unset dirExists_attempt
             IFS="$dirExists_OLD_IFS"
             unset dirExists_OLD_IFS
             return 2
@@ -64,6 +70,18 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
             dirExists_chkpath="${dirExists_chkpath#*/}"
             dirExists_chkpath="$dirExists_chkpath"
             dirExists_chkcmd="ssh $dirExists_remotessh ls"; 
+            # FIX #58: a remote check is one SSH round-trip over the
+            # internet away from a transient hiccup (a real one was
+            # observed in practice: manually re-running the exact same
+            # "ssh host ls path" command immediately afterward succeeded
+            # cleanly). Relying on a single attempt for a decision as
+            # consequential as "should I try to init a brand new repo
+            # here" is fragile - retry a few times with a short pause
+            # before concluding the repo genuinely doesn't exist. Local
+            # checks below are unaffected - no network involved, nothing
+            # to retry.
+            dirExists_isremote=1
+            dirExists_maxattempts=3
         else
             msg "DEBUG" "Local directory to test is: $dirExists_testdir"
             dirExists_chkpath=$dirExists_testdir
@@ -73,31 +91,44 @@ if [ -z "${REMOTE_DIR_FUNCTION_SCRIPT_SOURCED+x}" ]; then
         msg "DEBUG" "Checkcmd is $dirExists_chkcmd"
         msg "DEBUG" "Checkpath is $dirExists_chkpath"
 
-        if  $dirExists_chkcmd "$dirExists_chkpath" > /dev/null 2>&1; then
-            msg "INFO" "Directory $dirExists_chkpath - exist"
-            set +x
-            LASTFUNC="$dirExists_CALLINGFUCNTION"
-            unset dirExists_CALLINGFUCNTION
-            unset dirExists_testdir
-            unset dirExists_remotessh
-            unset dirExists_chkpath
-            unset dirExists_chkcmd
-            IFS="$dirExists_OLD_IFS"
-            unset dirExists_OLD_IFS
-            return 0
-        else
-            LASTFUNC="$dirExists_CALLINGFUCNTION"
-            unset dirExists_CALLINGFUCNTION
-            msg "INFO" "Directory $dirExists_chkpath doesn't exist"
-            set +x
-            unset dirExists_testdir
-            unset dirExists_remotessh
-            unset dirExists_chkpath
-            unset dirExists_chkcmd
-            IFS="$dirExists_OLD_IFS"
-            unset dirExists_OLD_IFS
-            return 1
-        fi
+        while [ "$dirExists_attempt" -le "$dirExists_maxattempts" ]; do
+            if  $dirExists_chkcmd "$dirExists_chkpath" > /dev/null 2>&1; then
+                msg "INFO" "Directory $dirExists_chkpath - exist"
+                set +x
+                LASTFUNC="$dirExists_CALLINGFUCNTION"
+                unset dirExists_CALLINGFUCNTION
+                unset dirExists_testdir
+                unset dirExists_remotessh
+                unset dirExists_chkpath
+                unset dirExists_chkcmd
+                unset dirExists_isremote
+                unset dirExists_maxattempts
+                unset dirExists_attempt
+                IFS="$dirExists_OLD_IFS"
+                unset dirExists_OLD_IFS
+                return 0
+            fi
+            if [ "$dirExists_isremote" = 1 ] && [ "$dirExists_attempt" -lt "$dirExists_maxattempts" ]; then
+                msg "WARNING" "Directory $dirExists_chkpath - remote check attempt $dirExists_attempt/$dirExists_maxattempts failed, retrying shortly (could be a transient network hiccup)"
+                sleep 2
+            fi
+            dirExists_attempt=$((dirExists_attempt + 1))
+        done
+
+        LASTFUNC="$dirExists_CALLINGFUCNTION"
+        unset dirExists_CALLINGFUCNTION
+        msg "INFO" "Directory $dirExists_chkpath doesn't exist"
+        set +x
+        unset dirExists_testdir
+        unset dirExists_remotessh
+        unset dirExists_chkpath
+        unset dirExists_chkcmd
+        unset dirExists_isremote
+        unset dirExists_maxattempts
+        unset dirExists_attempt
+        IFS="$dirExists_OLD_IFS"
+        unset dirExists_OLD_IFS
+        return 1
         
     }
     

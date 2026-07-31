@@ -33,6 +33,11 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         # $2 - optional - remote borg command
         #      if multiple remote repos are used, this value
         #      is used for all of them!
+        # $3 - optional - encryption mode for "borg init --encryption=..."
+        #      (default: repokey, preserving prior hardcoded behavior)
+        # Returns 0 if every repo in the list was successfully
+        # initialized, nonzero if any failed - see the FIX #57 comment
+        # below for why the caller needs to know this.
 
         initBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="initBorg"
@@ -40,15 +45,17 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         IFS=' '
         initBorg_pathlist="$1"
         initBorg_borgpath="$2"
+        initBorg_encryption="${3:-repokey}"
         
         initBorg_remotepath=""
         initBorg_cmdline=""
+        initBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$initBorg_borgpath" ]; then
-            msg "borgpath set"
+            msg "DEBUG" "borgpath set"
             initBorg_remotepath="--remote-path=${initBorg_borgpath}"
         else
-            msg "borgpath not set - default to borg"
+            msg "DEBUG" "borgpath not set - default to borg"
             initBorg_remotepath="--remote-path=borg"
         fi
 
@@ -56,14 +63,26 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             msg "DEBUG" "Init Borg path is: $i "
             if [ "${i#ssh://}" != "$i" ]; then
                 msg "DEBUG" "Initialize Remote path"
-                initBorg_cmdline="borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i""
+                initBorg_cmdline="borg init --encryption=$initBorg_encryption --show-rc "$initBorg_remotepath" "$i""
                 msg "DEBUG" "Init Borg cmdline is $initBorg_cmdline"
-                #exec_cmd borg init --encryption=repokey --show-rc "$initBorg_remotepath" "$i"
                 exec_cmd eval "$initBorg_cmdline"  
-                #set -e
             else
-                exec_cmd borg init --encryption=repokey --show-rc "$i"  
-                #set -e
+                exec_cmd borg init --encryption="$initBorg_encryption" --show-rc "$i"  
+            fi
+            initBorg_rc=$?
+            if [ "$initBorg_rc" -ne 0 ]; then
+                # FIX #57: exec_cmd intentionally skips err_hdlr when
+                # LASTFUNC=="initBorg" (mirroring the FIX #36 carve-out
+                # for createBorg) - a single repo failing to initialize
+                # (transient network hiccup, unreachable remote, etc.)
+                # must not abort backups to every OTHER configured repo.
+                # Surface it loudly, continue this loop, and report
+                # failure via our own return value - backendBorg checks
+                # that and skips create/prune/check for just this one
+                # repo, letting the dispatch loop move on to the next
+                # configured repo as originally intended.
+                msg "ERROR" "borg init failed (exit $initBorg_rc) for repo $i - skipping this repo, continuing with remaining repos"
+                initBorg_failed=1 # noqa:unset - see the initial assignment above
             fi
         done
         LASTFUNC="$initBorg_CALLINGFUCNTION"
@@ -74,7 +93,9 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset initBorg_borgpath
         unset initBorg_remotepath
         unset initBorg_pathlist
-        return 0
+        unset initBorg_encryption
+        unset initBorg_rc
+        return "$initBorg_failed"
     }
 
     createBorg(){
@@ -87,10 +108,19 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         #      if multiple remote repos are used, this value
         #      is used for all of them!
 
+        # FIX #60: this used to unconditionally force MSG_LEVEL=5 (full
+        # debug) for the duration of createBorg, restoring the real value
+        # afterward - meaning borg-side DEBUG messages always appeared
+        # regardless of the user's configured MSG_LEVEL, while every
+        # OTHER function correctly respected it. This is exactly why
+        # MSG_LEVEL appeared to be "ignored" - it silently wasn't being
+        # honored specifically here, and the resulting asymmetry (lots of
+        # borg-side debug noise, but properly-quiet output from
+        # everywhere else) is also why zfssend's own output seemed to be
+        # "missing" by comparison. No override at all now - createBorg
+        # respects whatever level is configured, like everything else.
         crtBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="createBorg"
-        crtBorg_msglevel="$MSG_LEVEL"
-        MSG_LEVEL=5
         crtBorg_OLD_IFS="$IFS"
         IFS=' '
         crtBorg_pathlist="$1"
@@ -100,12 +130,13 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         crtBorg_borgpath="$5"
         crtBorg_remotepath=""
         crtBorg_cmdline=""
+        crtBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$crtBorg_borgpath" ]; then
-            msg "borgpath set"
+            msg "DEBUG" "borgpath set"
             crtBorg_remotepath="--remote-path=${crtBorg_borgpath}"
         else
-            msg "borgpath not set - default to borg"
+            msg "DEBUG" "borgpath not set - default to borg"
             crtBorg_remotepath="--remote-path=borg"
         fi
         if [ -d $crtBorg_srcpath ]; then
@@ -131,13 +162,17 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                     # DEBUG mode - surface it instead, then continue with
                     # the remaining repos as originally intended.
                     msg "ERROR" "borg create failed (exit $crtBorg_rc) for repo $crtBorg_i, dataset $crtBorg_srcpath - continuing with remaining repos"
+                    # FIX #63: report the failure back to backendBorg, so
+                    # it can skip checkRestoreBorg for this repo instead of
+                    # checking a stale, pre-existing archive under this
+                    # same name (e.g. a same-day rerun hitting "already
+                    # exists") and misreporting that as data corruption.
+                    crtBorg_failed=1 # noqa:unset - see the initial assignment above
                 fi
             done
         else
-            MSG_LEVEL=$crtBorg_msglevel
             IFS="$crtBorg_OLD_IFS"
             unset crtBorg_OLD_IFS
-            unset crtBorg_msglevel
             unset crtBorg_cmdline
             unset crtBorg_i
             unset crtBorg_pathlist
@@ -151,12 +186,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             err_hdlr "1"
             return 1
         fi
-        MSG_LEVEL=$crtBorg_msglevel
         IFS="$crtBorg_OLD_IFS"
         unset crtBorg_OLD_IFS
         LASTFUNC="$crtBorg_CALLINGFUCNTION"
         unset crtBorg_CALLINGFUCNTION
-        unset crtBorg_msglevel
         unset crtBorg_cmdline
         unset crtBorg_i
         unset crtBorg_pathlist
@@ -166,7 +199,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset crtBorg_srcpath
         unset crtBorg_remotepath
         unset crtBorg_rc
-        return 0
+        return "$crtBorg_failed"
 
     }
 
@@ -189,12 +222,13 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         pruneBorg_borgpath="$4"
         pruneBorg_remotepath=""
         pruneBorg_cmdline=""
+        pruneBorg_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
 
         if [ -n "$pruneBorg_borgpath" ]; then
-            msg "borgpath set"
+            msg "DEBUG" "borgpath set"
             pruneBorg_remotepath="--remote-path=${pruneBorg_borgpath}"
         else
-            msg "borgpath not set - default to borg"
+            msg "DEBUG" "borgpath not set - default to borg"
             pruneBorg_remotepath="--remote-path=borg"
         fi
 
@@ -205,19 +239,45 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
                 pruneBorg_cmdline="borg prune $pruneBorg_borgopts $pruneBorg_remotepath ${pruneBorg_i}"
                 #exec_cmd borg prune "$pruneBorg_borgopts" "$pruneBorg_remotepath" "${pruneBorg_i}"
                 exec_cmd eval $pruneBorg_cmdline
+                pruneBorg_rc=$?
+                if [ "$pruneBorg_rc" -ne 0 ]; then
+                    # FIX #65: exec_cmd intentionally skips err_hdlr when
+                    # LASTFUNC=="pruneBorg" now (see FIX #36/#57/#63) - one
+                    # repo's prune failing (e.g. a transient network issue)
+                    # must not abort the whole run, and specifically must
+                    # not prevent pruneZFSSnapshot (source-side retention)
+                    # from running afterward.
+                    msg "ERROR" "borg prune failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                    pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                fi
                 if [ "$pruneBorg_compactlabel" = "monthly" ]; then
                     pruneBorg_cmdline="borg compact ${pruneBorg_i}"
                     exec_cmd eval $pruneBorg_cmdline
+                    pruneBorg_rc=$?
+                    if [ "$pruneBorg_rc" -ne 0 ]; then
+                        msg "ERROR" "borg compact failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                        pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                    fi
                 fi  
                 #set -e
             else 
                 pruneBorg_cmdline="borg prune $pruneBorg_borgopts ${pruneBorg_i}"
                 #exec_cmd borg prune "$pruneBorg_borgopts" "${pruneBorg_i}"
                 exec_cmd eval $pruneBorg_cmdline
+                pruneBorg_rc=$?
+                if [ "$pruneBorg_rc" -ne 0 ]; then
+                    msg "ERROR" "borg prune failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                    pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                fi
                 if [ "$pruneBorg_compactlabel" = "monthly" ]; then
                     pruneBorg_cmdline="borg compact ${pruneBorg_i}"
                     #exec_cmd borg compact "${pruneBorg_i}"
                     exec_cmd eval $pruneBorg_cmdline
+                    pruneBorg_rc=$?
+                    if [ "$pruneBorg_rc" -ne 0 ]; then
+                        msg "ERROR" "borg compact failed (exit $pruneBorg_rc) for repo $pruneBorg_i - continuing with remaining repos"
+                        pruneBorg_failed=1 # noqa:unset - see the initial assignment above
+                    fi
                 fi    
                 #set -e
             fi
@@ -233,6 +293,427 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset pruneBorg_compactlabel
         unset pruneBorg_borgpath
         unset pruneBorg_remotepath
+        unset pruneBorg_rc
+        return "$pruneBorg_failed"
+    }
+
+    ensureBorgInit(){
+        # FIX #69: generalizes ensureBorgBaseInit's approach (borg's own
+        # exit code, not filesystem existence, decides whether init is
+        # needed) to the generic case - a local path or a normal (non-
+        # BorgBase) ssh:// repo. Unlike BorgBase, a missing path here CAN
+        # be created, so this handles that too, unlike
+        # ensureBorgBaseInit's hard "die, can't create one" for that case.
+        #
+        # Without this, "the directory/path exists" (checked via
+        # direxists) was being used as a stand-in for "this is already an
+        # initialized borg repository" - which are different things. A
+        # directory that exists but was never actually borg-init'd (e.g.
+        # one this project's own setup-backup.sh deliberately only
+        # creates, leaving initialization to this script, since that's
+        # this script's own job) was silently treated as "nothing to do
+        # here", and createBorg then failed with "not a valid repository"
+        # - a confusing failure for what's actually a completely normal,
+        # expected first-run state.
+        #
+        # $1 - mandatory repo path (local path or ssh://...)
+        # $2 - optional borg remote command
+        # $3 - optional encryption mode for a fresh init (default: repokey)
+        # Returns 0 if the repo ends up usable (already initialized, or
+        # freshly initialized successfully this call), nonzero if
+        # initBorg was needed and failed.
+        ensureBorgInit_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="ensureBorgInit"
+        ensureBorgInit_repo="$1"
+        ensureBorgInit_remotecmd="$2"
+        ensureBorgInit_encryption="${3:-repokey}"
+        ensureBorgInit_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
+
+        if ! direxists "$ensureBorgInit_repo"; then
+            msg "INFO" "Creating repo directory: $ensureBorgInit_repo"
+            dircreate "$ensureBorgInit_repo"
+        fi
+
+        if [ -n "$ensureBorgInit_remotecmd" ]; then
+            ensureBorgInit_remotepath="--remote-path=${ensureBorgInit_remotecmd}"
+        else
+            ensureBorgInit_remotepath="--remote-path=borg"
+        fi
+
+        ensureBorgInit_listcmd="borg list $ensureBorgInit_remotepath \"$ensureBorgInit_repo\""
+        msg "DEBUG" "repo state check: $ensureBorgInit_listcmd"
+        # Only the exit code matters here - see FIX #62's comment on
+        # ensureBorgBaseInit for why the archive listing itself must not
+        # be allowed to leak to stdout unconditionally.
+        eval "$ensureBorgInit_listcmd" >/dev/null 2>&1
+        ensureBorgInit_listrc=$?
+        msg "DEBUG" "repo state check exit code: $ensureBorgInit_listrc"
+
+        if [ "$ensureBorgInit_listrc" -eq 0 ]; then
+            msg "DEBUG" "repo '$ensureBorgInit_repo' already initialized"
+        elif [ "$ensureBorgInit_listrc" -eq 52 ]; then
+            # borg's own PassphraseWrong (see Message IDs in its docs) -
+            # unlike other unexpected codes below, attempting init here
+            # would never help: a wrong passphrase means init would just
+            # fail too, so don't bother trying, and be specific about
+            # what's actually wrong instead of falling through to the
+            # generic "not yet a valid repository, trying init" message.
+            # FIX #71: this used to call die() here, which aborts the
+            # ENTIRE run - see the same fix in ensureBorgBaseInit for the
+            # full reasoning. Log clearly and let the caller skip just
+            # this one repo instead.
+            msg "ERROR" "repo '$ensureBorgInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52) - this repo already has its own encryption passphrase from when it was first initialized; if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one. Skipping this repo, continuing with remaining repos."
+            ensureBorgInit_failed=1 # noqa:unset - see the initial assignment above
+        else
+            # Deliberately not trying to distinguish every possible exit
+            # code here (unlike ensureBorgBaseInit, which can afford to
+            # since BorgBase's transport/exit-code behavior is fixed and
+            # well understood) - a generic repo could be a fresh local
+            # directory, a brand-new remote path, or any of several
+            # provider-specific quirks, and refusing to attempt init on
+            # anything but one exact expected code would turn every such
+            # edge case into a hard failure instead of just trying. If
+            # init itself then fails (e.g. it turns out the repo really
+            # was already valid and this was a transient listing hiccup),
+            # initBorg's own error handling reports that clearly.
+            msg "INFO" "repo '$ensureBorgInit_repo' is not yet a valid borg repository (borg list exit $ensureBorgInit_listrc) - running borg init"
+            if ! initBorg "$ensureBorgInit_repo" "$ensureBorgInit_remotecmd" "$ensureBorgInit_encryption"; then
+                ensureBorgInit_failed=1 # noqa:unset - see the initial assignment above
+            fi
+        fi
+
+        LASTFUNC="$ensureBorgInit_CALLINGFUCNTION"
+        unset ensureBorgInit_CALLINGFUCNTION
+        unset ensureBorgInit_repo
+        unset ensureBorgInit_remotecmd
+        unset ensureBorgInit_encryption
+        unset ensureBorgInit_remotepath
+        unset ensureBorgInit_listcmd
+        unset ensureBorgInit_listrc
+        return "$ensureBorgInit_failed"
+    }
+
+    ensureBorgBaseInit(){
+        # FIX #50: BorgBase (and any similarly locked-down "borg repo
+        # hosting" provider) forces every SSH login to run "borg serve"
+        # regardless of what command is actually sent - so direxists'/
+        # dircreate's shell commands (ls, mkdir) never reach a real shell
+        # at all; they get swallowed as bogus arguments to borg itself
+        # (visible as "borg: error: argument <command>: invalid choice").
+        # There is also no mkdir equivalent: BorgBase repos are created
+        # exactly once via their web UI, one fixed path per account - we
+        # can never create a new one, only detect whether the existing one
+        # has been borg-init'd yet.
+        #
+        # borg list's own exit code (stable, documented at
+        # https://borgbackup.readthedocs.io/en/stable/internals/frontends.html#message-ids)
+        # tells us exactly that, without needing any shell access at all:
+        #   0  - already a valid, initialized repo - nothing to do
+        #   15 - Repository.InvalidRepository: the path exists (BorgBase
+        #        created the slot) but isn't borg-init'd yet - this is the
+        #        normal state of a freshly-created BorgBase repo
+        #   13 - Repository.DoesNotExist: genuinely the wrong path - since
+        #        we can't create one, this is a real configuration error
+        #   anything else - a real, unexpected error
+        #
+        # Note: rc 15 for *remote* repos specifically requires a client
+        # (not server) borg version >= 1.4.1 - see
+        # https://github.com/borgbackup/borg/issues/8631. Older clients
+        # get a generic rc 2 instead, which this function will (correctly)
+        # treat as "unexpected error" rather than silently misinterpreting
+        # it as "needs init".
+        #
+        # $1 - mandatory repo path (ssh://...)
+        # $2 - optional borg remote command
+        # $3 - optional encryption mode for a fresh init (default: repokey)
+        ensureBorgBaseInit_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="ensureBorgBaseInit"
+        ensureBorgBaseInit_repo="$1"
+        ensureBorgBaseInit_remotecmd="$2"
+        ensureBorgBaseInit_encryption="${3:-repokey}"
+
+        if [ -n "$ensureBorgBaseInit_remotecmd" ]; then
+            ensureBorgBaseInit_remotepath="--remote-path=${ensureBorgBaseInit_remotecmd}"
+        else
+            ensureBorgBaseInit_remotepath="--remote-path=borg"
+        fi
+
+        ensureBorgBaseInit_listcmd="borg list $ensureBorgBaseInit_remotepath \"$ensureBorgBaseInit_repo\""
+        msg "DEBUG" "borgbase repo state check: $ensureBorgBaseInit_listcmd"
+        # FIX #62: only the exit code matters here - the archive listing itself is
+        # irrelevant to this state check and was leaking straight to
+        # stdout unconditionally, bypassing MSG_LEVEL entirely (it's
+        # borg's own native output, not something routed through msg()),
+        # showing up as unexplained noise in the log/mail even at the
+        # quietest configured level.
+        eval "$ensureBorgBaseInit_listcmd" >/dev/null 2>&1
+        ensureBorgBaseInit_listrc=$?
+        msg "DEBUG" "borgbase repo state check exit code: $ensureBorgBaseInit_listrc"
+
+        ensureBorgBaseInit_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
+
+        case "$ensureBorgBaseInit_listrc" in
+            0)
+                msg "DEBUG" "borgbase repo '$ensureBorgBaseInit_repo' already initialized"
+                ;;
+            15)
+                msg "INFO" "borgbase repo '$ensureBorgBaseInit_repo' exists but is not yet initialized - running borg init"
+                if ! initBorg "$ensureBorgBaseInit_repo" "$ensureBorgBaseInit_remotecmd" "$ensureBorgBaseInit_encryption"; then
+                    ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
+                fi
+                ;;
+            13)
+                # FIX #71: this used to call die() here, which aborts the
+                # ENTIRE run (die() exits the whole process) - meaning
+                # this one repo's configuration problem prevented every
+                # OTHER configured repo from being backed up too, unlike
+                # every other repo-level failure in this project (FIX
+                # #36/#57/#59/#65/#69), which logs clearly and lets the
+                # dispatch loop continue to the next repo. Report it just
+                # as loudly, but don't take everything else down with it.
+                msg "ERROR" "borgbase repo '$ensureBorgBaseInit_repo' does not exist - BorgBase repos must be created via their web UI first (filesystem operations aren't possible over their restricted SSH access, so this can't be created automatically); check the path and that the repo exists in your BorgBase dashboard. Skipping this repo, continuing with remaining repos."
+                ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
+                ;;
+            52)
+                # FIX #71: same reasoning as rc 13 above.
+                msg "ERROR" "borgbase repo '$ensureBorgBaseInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52) - this repo already has its own encryption passphrase from when it was first initialized; if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one. Skipping this repo, continuing with remaining repos."
+                ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
+                ;;
+            *)
+                # FIX #71: same reasoning as rc 13 above.
+                msg "ERROR" "borgbase repo check failed unexpectedly (borg list exit $ensureBorgBaseInit_listrc) for '$ensureBorgBaseInit_repo' - see the borg output above for details. If this is rc 2, double check your client's borg version supports modern remote exit codes (>= 1.4.1, see FIX #50's comments). Skipping this repo, continuing with remaining repos."
+                ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
+                ;;
+        esac
+
+        LASTFUNC="$ensureBorgBaseInit_CALLINGFUCNTION"
+        unset ensureBorgBaseInit_CALLINGFUCNTION
+        unset ensureBorgBaseInit_repo
+        unset ensureBorgBaseInit_remotecmd
+        unset ensureBorgBaseInit_encryption
+        unset ensureBorgBaseInit_remotepath
+        unset ensureBorgBaseInit_listcmd
+        unset ensureBorgBaseInit_listrc
+        return "$ensureBorgBaseInit_failed"
+    }
+
+    checkBorg(){
+        # BORG_VERIFY: runs "borg check" at a configurable depth after
+        # pruning, so a corrupted/unrestorable repo is caught proactively
+        # instead of discovered during an actual disaster recovery attempt.
+        # $1 - mandatory repo path
+        # $2 - optional borg remote command
+        # $3 - mandatory verify depth: "off" (no-op), "repo"
+        #      (--repository-only, cheapest - runs server-side for ssh://
+        #      repos), "archive" (--archives-only, archive metadata, no
+        #      file data read), or "data" (--verify-data, full
+        #      cryptographic verification of all backed-up data - by far
+        #      the most thorough, and the most expensive).
+        checkBorg_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkBorg"
+        checkBorg_repo="$1"
+        checkBorg_remotecmd="$2"
+        checkBorg_depth="$3"
+
+        if [ -z "$checkBorg_depth" ] || [ "$checkBorg_depth" = "off" ]; then
+            LASTFUNC="$checkBorg_CALLINGFUCNTION"
+            unset checkBorg_CALLINGFUCNTION
+            unset checkBorg_repo
+            unset checkBorg_remotecmd
+            unset checkBorg_depth
+            return 0
+        fi
+
+        case "$checkBorg_depth" in
+            repo) checkBorg_flags="--repository-only" ;;
+            archive) checkBorg_flags="--archives-only" ;;
+            data) checkBorg_flags="--verify-data" ;;
+            *)
+                msg "WARNING" "checkBorg: unknown verify depth '$checkBorg_depth' for repo '$checkBorg_repo' - skipping verification this run"
+                LASTFUNC="$checkBorg_CALLINGFUCNTION"
+                unset checkBorg_CALLINGFUCNTION
+                unset checkBorg_repo
+                unset checkBorg_remotecmd
+                unset checkBorg_depth
+                return 0
+                ;;
+        esac
+
+        if [ -n "$checkBorg_remotecmd" ]; then
+            checkBorg_remotepath="--remote-path=${checkBorg_remotecmd}"
+        else
+            checkBorg_remotepath="--remote-path=borg"
+        fi
+
+        msg "DEBUG" "--------------------------- CHECK BORG (depth: $checkBorg_depth) -----------------------------------"
+        msg "DEBUG" "Repo is: $checkBorg_repo "
+
+        if [ "${checkBorg_repo#ssh://}" != "$checkBorg_repo" ]; then
+            checkBorg_cmdline="borg check $checkBorg_flags --show-rc $checkBorg_remotepath $checkBorg_repo"
+        else
+            checkBorg_cmdline="borg check $checkBorg_flags --show-rc $checkBorg_repo"
+        fi
+        msg "DEBUG" "Borg check cmdline: $checkBorg_cmdline"
+
+        # Deliberately not exec_cmd/die on failure: a check finding a
+        # problem is serious, but doesn't mean TODAY's backup itself is
+        # bad - an OLDER archive could be the corrupted one. Aborting the
+        # whole run over this would be disruptive for something that's
+        # rarely urgently actionable mid-run. A WARNING is enough to get
+        # picked up by FIX #48's mail escalation automatically (elevated
+        # priority, surfaced at the top of the notification) - no new
+        # mechanism needed.
+        eval "$checkBorg_cmdline"
+        checkBorg_rc=$?
+        if [ "$checkBorg_rc" -ne 0 ]; then
+            msg "WARNING" "borg check found a problem in repo '$checkBorg_repo' (depth: $checkBorg_depth, exit $checkBorg_rc) - see the check output above for details. This does not necessarily mean today's archive is affected; investigate before relying on this repo for a restore."
+        else
+            msg "INFO" "borg check (depth: $checkBorg_depth) passed for repo '$checkBorg_repo'"
+        fi
+
+        LASTFUNC="$checkBorg_CALLINGFUCNTION"
+        unset checkBorg_CALLINGFUCNTION
+        unset checkBorg_repo
+        unset checkBorg_remotecmd
+        unset checkBorg_depth
+        unset checkBorg_remotepath
+        unset checkBorg_cmdline
+        unset checkBorg_flags
+        unset checkBorg_rc
+        return 0
+    }
+
+    checkRestoreBorg(){
+        # RESTORE_VERIFY: proves the actual RESTORE PATH works
+        # (extraction, decryption, permissions) - something BORG_VERIFY's
+        # --verify-data can never show, since it only proves the stored
+        # bytes are intact, not that getting them back out actually
+        # works. Reads back the canary file startBackupMachine wrote into
+        # the live dataset (and therefore into THIS run's own snapshot,
+        # and therefore into the archive just created) and compares its
+        # hash - a mismatch means the restore path is broken for this
+        # specific repo, which is a genuine FAILURE, not a warning (see
+        # the RESTOREVERIFY_FAILED comment in bckp_hdlr.sh for why).
+        #
+        # $1 - mandatory repo path
+        # $2 - optional borg remote command
+        # $3 - mandatory archive name (this run's own archive - not
+        #      "latest", so this checks exactly what was just backed up)
+        checkRestoreBorg_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkRestoreBorg"
+        checkRestoreBorg_repo="$1"
+        checkRestoreBorg_remotecmd="$2"
+        checkRestoreBorg_archive="$3"
+
+        if [ "${RESTOREVERIFY_ACTIVE:-off}" != "on" ]; then
+            LASTFUNC="$checkRestoreBorg_CALLINGFUCNTION"
+            unset checkRestoreBorg_CALLINGFUCNTION
+            unset checkRestoreBorg_repo
+            unset checkRestoreBorg_remotecmd
+            unset checkRestoreBorg_archive
+            return 0
+        fi
+
+        if [ -n "$checkRestoreBorg_remotecmd" ]; then
+            checkRestoreBorg_remotepath="--remote-path=${checkRestoreBorg_remotecmd}"
+        else
+            checkRestoreBorg_remotepath="--remote-path=borg"
+        fi
+
+        msg "DEBUG" "--------------------------- CHECK RESTORE (borg) -----------------------------------"
+        msg "DEBUG" "Repo is: $checkRestoreBorg_repo, archive: $checkRestoreBorg_archive"
+
+        if [ "${checkRestoreBorg_repo#ssh://}" != "$checkRestoreBorg_repo" ]; then
+            checkRestoreBorg_cmdline="borg extract --stdout $checkRestoreBorg_remotepath \"${checkRestoreBorg_repo}::${checkRestoreBorg_archive}\" \"$RESTOREVERIFY_CANARY_ARCHIVEPATH\""
+        else
+            checkRestoreBorg_cmdline="borg extract --stdout \"${checkRestoreBorg_repo}::${checkRestoreBorg_archive}\" \"$RESTOREVERIFY_CANARY_ARCHIVEPATH\""
+        fi
+        msg "DEBUG" "Restore-check cmdline: $checkRestoreBorg_cmdline"
+
+        checkRestoreBorg_scratchfile=$(mktemp)
+        eval "$checkRestoreBorg_cmdline" > "$checkRestoreBorg_scratchfile" 2>/dev/null
+        checkRestoreBorg_extractrc=$?
+
+        if [ "$checkRestoreBorg_extractrc" -ne 0 ]; then
+            msg "ERROR" "restore verification FAILED for repo '$checkRestoreBorg_repo' (archive $checkRestoreBorg_archive) - could not extract the canary file (exit $checkRestoreBorg_extractrc). The restore path itself may be broken for this repo."
+            RESTOREVERIFY_FAILED=1
+        else
+            checkRestoreBorg_actualhash=$(sha256sum "$checkRestoreBorg_scratchfile" 2>/dev/null | cut -d' ' -f1)
+            if [ "$checkRestoreBorg_actualhash" != "$RESTOREVERIFY_CANARY_HASH" ]; then
+                msg "ERROR" "restore verification FAILED for repo '$checkRestoreBorg_repo' (archive $checkRestoreBorg_archive) - canary content mismatch after extraction (expected $RESTOREVERIFY_CANARY_HASH, got $checkRestoreBorg_actualhash). The restore path may be corrupting or truncating data."
+                RESTOREVERIFY_FAILED=1
+            else
+                msg "INFO" "restore verification passed for repo '$checkRestoreBorg_repo' (archive $checkRestoreBorg_archive)"
+            fi
+            unset checkRestoreBorg_actualhash
+        fi
+        rm -f "$checkRestoreBorg_scratchfile"
+        unset checkRestoreBorg_scratchfile
+        unset checkRestoreBorg_extractrc
+
+        LASTFUNC="$checkRestoreBorg_CALLINGFUCNTION"
+        unset checkRestoreBorg_CALLINGFUCNTION
+        unset checkRestoreBorg_repo
+        unset checkRestoreBorg_remotecmd
+        unset checkRestoreBorg_archive
+        unset checkRestoreBorg_remotepath
+        unset checkRestoreBorg_cmdline
+        return 0
+    }
+
+    checkRepoCapacity(){
+        # $1 - mandatory repo path
+        # Reports the repo's filesystem fill level (used/available/
+        # percent) after backup - INFO normally, WARNING if it's at or
+        # above the optional CAPACITY_WARN_PERCENT threshold. Best-effort
+        # for remote (ssh://) repos: some providers' restricted shells
+        # (see FIX #50's BorgBase discussion) may not support "df" at
+        # all - this degrades gracefully to a DEBUG-level skip note
+        # rather than treating that as an error.
+        checkRepoCapacity_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="checkRepoCapacity"
+        checkRepoCapacity_repo="$1"
+        checkRepoCapacity_host=""
+        checkRepoCapacity_path=""
+
+        if [ "${checkRepoCapacity_repo#ssh://}" != "$checkRepoCapacity_repo" ]; then
+            checkRepoCapacity_host="${checkRepoCapacity_repo#ssh://}"
+            checkRepoCapacity_host="${checkRepoCapacity_host%%/*}"
+            checkRepoCapacity_path="${checkRepoCapacity_repo#ssh://*/}"
+            checkRepoCapacity_dfline=$(ssh "$checkRepoCapacity_host" df -Pk "$checkRepoCapacity_path" 2>/dev/null | tail -1)
+        else
+            checkRepoCapacity_dfline=$(df -Pk "$checkRepoCapacity_repo" 2>/dev/null | tail -1)
+        fi
+
+        if [ -n "$checkRepoCapacity_dfline" ]; then
+            checkRepoCapacity_pct=$(printf '%s\n' "$checkRepoCapacity_dfline" | awk '{print $5}' | tr -d '%')
+            checkRepoCapacity_avail=$(printf '%s\n' "$checkRepoCapacity_dfline" | awk '{print $4}')
+            case "$checkRepoCapacity_pct" in
+                ''|*[!0-9]*)
+                    msg "DEBUG" "checkRepoCapacity: could not parse 'df' output for repo '$checkRepoCapacity_repo' - skipping capacity check this run"
+                    ;;
+                *)
+                    checkRepoCapacity_availhuman=$(awk -v kb="$checkRepoCapacity_avail" 'BEGIN{if(kb>=1073741824)printf "%.1f TB",kb/1073741824;else if(kb>=1048576)printf "%.1f GB",kb/1048576;else if(kb>=1024)printf "%.1f MB",kb/1024;else printf "%d KB",kb}')
+                    if [ -n "${CAPACITY_WARN_PERCENT:-}" ] && [ "$checkRepoCapacity_pct" -ge "$CAPACITY_WARN_PERCENT" ]; then
+                        msg "WARNING" "repo '$checkRepoCapacity_repo' is ${checkRepoCapacity_pct}% full ($checkRepoCapacity_availhuman free) - at or above the configured CAPACITY_WARN_PERCENT=$CAPACITY_WARN_PERCENT"
+                    else
+                        msg "INFO" "repo '$checkRepoCapacity_repo' fill level: ${checkRepoCapacity_pct}% used, $checkRepoCapacity_availhuman free"
+                    fi
+                    unset checkRepoCapacity_availhuman
+                    ;;
+            esac
+            unset checkRepoCapacity_pct
+            unset checkRepoCapacity_avail
+        else
+            msg "DEBUG" "checkRepoCapacity: 'df' produced no output for repo '$checkRepoCapacity_repo' (a remote provider's restricted shell may not support it) - capacity check skipped"
+        fi
+
+        unset checkRepoCapacity_dfline
+        unset checkRepoCapacity_host
+        unset checkRepoCapacity_path
+        LASTFUNC="$checkRepoCapacity_CALLINGFUCNTION"
+        unset checkRepoCapacity_CALLINGFUCNTION
+        unset checkRepoCapacity_repo
         return 0
     }
 
@@ -249,6 +730,15 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         # $6 - mandatory prune options string (see FIX #1/#4/#33)
         # $7 - mandatory interval label (e.g. "monthly-20260719"; pruneBorg
         #      uses its prefix to decide whether to also run borg compact)
+        # $8 - optional encryption mode for a fresh init (default: repokey)
+        # $9 - optional repo type ("borg" or "borgbase"; default: "borg").
+        #      "borgbase" uses ensureBorgBaseInit's borg-native (no shell)
+        #      existence/init check instead of direxists/dircreate - see
+        #      FIX #50 for why: BorgBase's forced-command SSH rejects any
+        #      non-borg command at all, including ls/mkdir.
+        # $10 - optional BORG_VERIFY depth for this run's interval
+        #       ("off"/"repo"/"archive"/"data"; default: "off") - see
+        #       checkBorg().
         backendBorg_CALLINGFUCNTION="$LASTFUNC"
         LASTFUNC="backendBorg"
         backendBorg_repo="$1"
@@ -258,20 +748,72 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         backendBorg_srcpath="$5"
         backendBorg_pruneopts="$6"
         backendBorg_intervallabel="$7"
+        backendBorg_encryption="${8:-repokey}"
+        backendBorg_repotype="${9:-borg}"
+        backendBorg_verifydepth="${10:-off}"
 
-        if ! direxists "$backendBorg_repo"; then
-            msg "INFO" "Creating repo directory: $backendBorg_repo"
-            dircreate "$backendBorg_repo"
-            msg "INFO" "Init Borg repo: $backendBorg_repo"
-            initBorg "$backendBorg_repo" "$backendBorg_remotecmd"
+        if [ "$backendBorg_repotype" = "borgbase" ]; then
+            ensureBorgBaseInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+            backendBorg_initfailed=$?
+        else
+            ensureBorgInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+            backendBorg_initfailed=$?
         fi
+        if [ "$backendBorg_initfailed" -ne 0 ]; then
+            # FIX #57/#71: ensureBorgInit/ensureBorgBaseInit already
+            # logged the failure loudly and returned nonzero - this repo
+            # isn't usable this run (createBorg/pruneBorg/checkBorg would
+            # just cascade into more failures against a never-initialized
+            # or misconfigured repo). Skip it, but let the dispatch loop
+            # in bckp_hdlr.sh continue normally to the next configured
+            # repo, matching FIX #36's philosophy. FIX #71 specifically:
+            # ensureBorgBaseInit used to die() on several of its own
+            # failure cases (repo doesn't exist, wrong passphrase,
+            # unexpected borg list exit code) - die() exits the ENTIRE
+            # process, so one BorgBase repo's configuration problem was
+            # taking down backups to every OTHER configured repo too,
+            # unlike every other repo-level failure in this project.
+            LASTFUNC="$backendBorg_CALLINGFUCNTION"
+            unset backendBorg_CALLINGFUCNTION
+            unset backendBorg_repo
+            unset backendBorg_remotecmd
+            unset backendBorg_label
+            unset backendBorg_createopts
+            unset backendBorg_srcpath
+            unset backendBorg_pruneopts
+            unset backendBorg_intervallabel
+            unset backendBorg_encryption
+            unset backendBorg_repotype
+            unset backendBorg_verifydepth
+            unset backendBorg_initfailed
+            return 0
+        fi
+        unset backendBorg_initfailed
 
         msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
         msg "DEBUG" "Repo is: $backendBorg_repo "
         createBorg "$backendBorg_repo" "$backendBorg_label" "$backendBorg_createopts" "$backendBorg_srcpath" "$backendBorg_remotecmd"
+        backendBorg_createfailed=$?
         msg "DEBUG" "--------------------------- PRUNE BORG -----------------------------------"
         msg "DEBUG" "Repo is: $backendBorg_repo "
         pruneBorg "$backendBorg_repo" "$backendBorg_pruneopts" "$backendBorg_intervallabel" "$backendBorg_remotecmd"
+        checkBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_verifydepth"
+        # FIX #63: skip checkRestoreBorg specifically if createBorg failed
+        # for this repo (e.g. a same-day rerun hitting "archive already
+        # exists") - the archive under today's label is then a STALE one
+        # from an earlier attempt, not something this run actually wrote,
+        # and checking it would compare today's freshly-computed canary
+        # hash against old content, misreporting a harmless non-event as
+        # "the restore path may be corrupting data". checkBorg and
+        # checkRepoCapacity above are unaffected - they're meaningful
+        # checks on the repo in general, independent of whether today's
+        # specific archive got created.
+        if [ "$backendBorg_createfailed" -eq 0 ]; then
+            checkRestoreBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_label"
+        else
+            msg "INFO" "skipping restore verification for repo '$backendBorg_repo' - today's archive was not freshly created this run, nothing new to verify"
+        fi
+        checkRepoCapacity "$backendBorg_repo"
 
         LASTFUNC="$backendBorg_CALLINGFUCNTION"
         unset backendBorg_CALLINGFUCNTION
@@ -282,6 +824,10 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset backendBorg_srcpath
         unset backendBorg_pruneopts
         unset backendBorg_intervallabel
+        unset backendBorg_encryption
+        unset backendBorg_repotype
+        unset backendBorg_verifydepth
+        unset backendBorg_createfailed
         return 0
     }
 

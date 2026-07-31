@@ -23,7 +23,7 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
 #[ ] TODO #19 Rename local variables to unique names / complete rework to reflect the changes made in the whole process
     set -u
     msg "DEBUG" "-----------------------------------------------"
-    msg "msg_and_err_hdlr.sh invoked"
+    msg "DEBUG" "cfg_file_hdlr.sh invoked"
     msg "DEBUG" "-----------------------------------------------"
 
     checkFilePerms() {
@@ -82,6 +82,44 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         # shellcheck disable=SC1090
         . "$lconfigfile"
 
+        # MSG_LEVEL: optional, lets a config file override the message
+        # verbosity that's otherwise hardcoded in borgsnap_ng.sh (0=errors
+        # only, 1=+warnings, 2=+info, 3=+verbose, 5=full debug - see
+        # msg_and_err_hdlr.sh for the exact thresholds). If the config
+        # file doesn't set it, whatever borgsnap_ng.sh set before sourcing
+        # this file stands unchanged - this is purely validation, not a
+        # default-setting step. Messages logged before this point (during
+        # early sourcing) already used the pre-config level and can't be
+        # retroactively changed.
+        case "$MSG_LEVEL" in
+            ''|*[!0-9]*)
+                die "MSG_LEVEL: invalid value '$MSG_LEVEL' - must be a non-negative integer (0=errors only ... 5=full debug)"
+                ;;
+        esac
+        export MSG_LEVEL
+        msg "DEBUG" "MSG_LEVEL is $MSG_LEVEL"
+
+        # SNAPSHOT_TAG: optional, empty by default. Inserted as
+        # "TAG-interval-date" instead of the plain "interval-date" ZFS
+        # snapshot label - lets borgsnap_ng coexist on the same dataset
+        # as another backup tool (including the original borgsnap, which
+        # shares this same interval-date label convention) without a
+        # snapshot-name collision. Restricted to letters/digits/
+        # underscore - it becomes part of a ZFS snapshot name and is
+        # matched via exact-prefix string operations elsewhere, so
+        # anything that could be ambiguous with the "-" separator between
+        # tag/interval/date, or that ZFS itself would reject, is rejected
+        # here up front instead of failing confusingly later.
+        if [ -n "${SNAPSHOT_TAG:-}" ]; then
+            case "$SNAPSHOT_TAG" in
+                *[!a-zA-Z0-9_]*)
+                    die "SNAPSHOT_TAG: invalid value '$SNAPSHOT_TAG' - only letters, digits, and underscore are allowed"
+                    ;;
+            esac
+        fi
+        export SNAPSHOT_TAG
+        msg "DEBUG" "SNAPSHOT_TAG is ${SNAPSHOT_TAG:-<not set>}"
+
         # [ ] TODO: #20 Modifiy to check if borg user is used
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
@@ -128,6 +166,81 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         else
             export LOCAL_READABLE_BY_OTHERS
             msg "INFO" "LOCAL_READABLE_BY_OTHERS set to $LOCAL_READABLE_BY_OTHERS"
+        fi
+
+        # BORG_VERIFY: optional, per-interval "borg check" depth, e.g.
+        # "daily:off;weekly:repo;monthly:data". Unset/empty means no
+        # verification at all for every interval - preserves existing
+        # behavior for every config that predates this feature. Validated
+        # here (not silently ignored later) so a typo'd depth is caught at
+        # config load time, not discovered months later when a scheduled
+        # check never actually ran.
+        if [ "${BORG_VERIFY:-}" = "" ]; then
+            export BORG_VERIFY=""
+            msg "INFO" "BORG_VERIFY not configured, defaulting to no verification"
+        else
+            export BORG_VERIFY
+            msg "INFO" "BORG_VERIFY set to $BORG_VERIFY"
+            lconfigfile_verify_OLD_IFS="$IFS"
+            IFS=';'
+            for lconfigfile_verify_entry in $BORG_VERIFY; do
+                lconfigfile_verify_depth="${lconfigfile_verify_entry#*:}"
+                case "$lconfigfile_verify_depth" in
+                    off|repo|archive|data) ;;
+                    *)
+                        lconfigfile_verify_msg="BORG_VERIFY: invalid depth '$lconfigfile_verify_depth' in entry '$lconfigfile_verify_entry' - must be one of: off, repo, archive, data" # noqa:unset
+                        IFS="$lconfigfile_verify_OLD_IFS"
+                        unset lconfigfile_verify_OLD_IFS
+                        unset lconfigfile_verify_entry
+                        unset lconfigfile_verify_depth
+                        die "$lconfigfile_verify_msg"
+                        ;;
+                esac
+            done
+            IFS="$lconfigfile_verify_OLD_IFS"
+            unset lconfigfile_verify_OLD_IFS
+            unset lconfigfile_verify_entry
+            unset lconfigfile_verify_depth
+        fi
+
+        # RESTORE_VERIFY: optional, per-interval restore-path verification,
+        # e.g. "daily:off;monthly:on". Unlike BORG_VERIFY (which checks
+        # that the stored BYTES are intact), this checks that the actual
+        # RESTORE PATH works - extraction/mount, permissions, the whole
+        # pipeline - by writing a known "canary" file into the dataset
+        # before every run this is enabled for, then reading it back from
+        # each backend after the backup completes and comparing. Unset/
+        # empty means no verification for every interval - preserves
+        # existing behavior for every config that predates this feature.
+        # Validated here for the same reason as BORG_VERIFY: catch a
+        # typo'd value at config load time, not months later when a
+        # scheduled check never actually ran.
+        if [ "${RESTORE_VERIFY:-}" = "" ]; then
+            export RESTORE_VERIFY=""
+            msg "INFO" "RESTORE_VERIFY not configured, defaulting to no verification"
+        else
+            export RESTORE_VERIFY
+            msg "INFO" "RESTORE_VERIFY set to $RESTORE_VERIFY"
+            lconfigfile_rverify_OLD_IFS="$IFS"
+            IFS=';'
+            for lconfigfile_rverify_entry in $RESTORE_VERIFY; do
+                lconfigfile_rverify_depth="${lconfigfile_rverify_entry#*:}"
+                case "$lconfigfile_rverify_depth" in
+                    off|on) ;;
+                    *)
+                        lconfigfile_rverify_msg="RESTORE_VERIFY: invalid value '$lconfigfile_rverify_depth' in entry '$lconfigfile_rverify_entry' - must be one of: off, on" # noqa:unset
+                        IFS="$lconfigfile_rverify_OLD_IFS"
+                        unset lconfigfile_rverify_OLD_IFS
+                        unset lconfigfile_rverify_entry
+                        unset lconfigfile_rverify_depth
+                        die "$lconfigfile_rverify_msg"
+                        ;;
+                esac
+            done
+            IFS="$lconfigfile_rverify_OLD_IFS"
+            unset lconfigfile_rverify_OLD_IFS
+            unset lconfigfile_rverify_entry
+            unset lconfigfile_rverify_depth
         fi
 
         if [ "$COMPRESS" = "" ]; then

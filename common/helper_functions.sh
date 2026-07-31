@@ -23,7 +23,7 @@ if [ -z "${HELPER_FUNCTIONS_SOURCED+x}" ]; then
 
     set -u
     msg "DEBUG" "-----------------------------------------------"
-    msg "helper_functions.sh invoked"
+    msg "DEBUG" "helper_functions.sh invoked"
     msg "DEBUG" "-----------------------------------------------"
 
     chkDateStr() {

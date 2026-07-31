@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.14
+# TESTKIT_VERSION=2026-07-20.40
 # Mock zfs for borgsnap_ng tests.
 # Logs every invocation to $MOCK_LOG and keeps snapshot state in $MOCK_STATE.
 # Supported: snapshot [-r], destroy [-r], list -t snap[shot]|bookmark [-H]
@@ -54,9 +54,11 @@ case "$cmd" in
     snap="$1"
     grep -qxF "$snap" "$MOCK_STATE" && { echo "cannot create snapshot '$snap': dataset already exists" >&2; exit 1; }
     echo "$snap" >> "$MOCK_STATE"
-    if [ "$recursive" = 1 ]; then
+    if [ "$recursive" = 1 ] && [ "${MOCK_ZFS_NO_CHILD:-0}" != 1 ]; then
       ds="${snap%@*}"; label="${snap#*@}"
-      # simulate one child dataset for recursion tests
+      # simulate one child dataset for recursion tests (unless
+      # MOCK_ZFS_NO_CHILD=1 - needed to test the genuine "recursive flag
+      # set, but the dataset actually has zero children" case, FIX #52)
       echo "$ds/child@$label" >> "$MOCK_STATE"
     fi
     exit 0 ;;
@@ -73,13 +75,14 @@ case "$cmd" in
     fi
     # crude arg parse: detect -H, -t VALUE, -s VALUE, -d 1, dataset filter
     # (last non-option arg)
-    H=0; ds=""; had_t=0; ttype=""
+    H=0; ds=""; had_t=0; ttype=""; recursive=0
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -H) H=1 ;;
         -t) had_t=1; shift; ttype="$1" ;;
         -o|-d|-s) shift ;;
-        -Hr) H=1 ;;
+        -Hr) H=1; recursive=1 ;;
+        -r) recursive=1 ;;
         -*) : ;;
         *) ds="$1" ;;
       esac
@@ -117,7 +120,11 @@ case "$cmd" in
       # sorting logic here.
       [ "$H" = 0 ] && echo "NAME"
       if [ -n "$ds" ]; then
-        grep -E "^${ds}(/[^@#]+)?@" "$MOCK_STATE" 2>/dev/null
+        if [ "$recursive" = 1 ]; then
+          grep -E "^${ds}(/[^@#]+)?@" "$MOCK_STATE" 2>/dev/null
+        else
+          grep -E "^${ds}@" "$MOCK_STATE" 2>/dev/null
+        fi
       else
         grep "@" "$MOCK_STATE" 2>/dev/null
       fi
@@ -144,18 +151,57 @@ case "$cmd" in
     fi
     ;;
   get)
-    # FIX #44: only supports the specific invocation backendZfsSend uses:
+    # FIX #44/RESTORE_VERIFY: supports the two specific invocations this
+    # project actually uses:
     #   zfs get -H -o value receive_resume_token <dataset>
-    # The dataset is always the last positional argument.
-    ds=""
-    for a in "$@"; do ds="$a"; done
-    tok=$(grep "^${ds}::resume::" "$MOCK_STATE" 2>/dev/null | sed "s|^${ds}::resume::||")
-    if [ -n "$tok" ]; then
-      echo "$tok"
-    else
-      echo "-"
-    fi
-    exit 0 ;;
+    #   zfs get -H -o value mountpoint <dataset>
+    # Property name and dataset are both positional non-flag arguments;
+    # the property name comes first, the dataset last. "-o value" is a
+    # flag+argument pair that both need skipping together, not just "-o"
+    # alone - otherwise "value" gets mistaken for a real positional arg.
+    args=""
+    skipnext=0
+    for a in "$@"; do
+      if [ "$skipnext" = 1 ]; then
+        skipnext=0
+        continue
+      fi
+      case "$a" in
+        -o) skipnext=1 ;;
+        -*) ;;
+        *) args="$args $a" ;;
+      esac
+    done
+    # shellcheck disable=SC2086
+    set -- $args
+    prop="$1"
+    ds="$2"
+    case "$prop" in
+      mountpoint)
+        mp=$(grep "^${ds}::prop::mountpoint::" "$MOCK_STATE" 2>/dev/null | tail -1 | sed "s|^${ds}::prop::mountpoint::||")
+        if [ -n "$mp" ]; then
+          echo "$mp"
+        else
+          # RESTORE_VERIFY needs a REAL, writable directory to write its
+          # canary file to during tests - MOCK_ZFS_MOUNTBASE lets a test
+          # point this at its own workdir; auto-created on demand,
+          # simulating "this dataset's regular mountpoint already exists"
+          # without needing a real ZFS mount at all.
+          mp="${MOCK_ZFS_MOUNTBASE:-/tmp/mockzfsmounts}/$ds"
+          mkdir -p "$mp" 2>/dev/null
+          echo "$mp"
+        fi
+        exit 0 ;;
+      *)
+        tok=$(grep "^${ds}::resume::" "$MOCK_STATE" 2>/dev/null | sed "s|^${ds}::resume::||")
+        if [ -n "$tok" ]; then
+          echo "$tok"
+        else
+          echo "-"
+        fi
+        exit 0 ;;
+    esac
+    ;;
   create)
     [ "$1" = "-p" ] && shift
     ds="$1"
@@ -189,9 +235,11 @@ case "$cmd" in
     exit 0 ;;
   receive)
     ds=""
+    hasF=0
     for a in "$@"; do
       case "$a" in
         -s) ;;
+        -F) hasF=1 ;;
         *) ds="$a" ;;
       esac
     done
@@ -200,6 +248,16 @@ case "$cmd" in
     # the label the (fake) stream says it's carrying.
     stream=$(cat)
     label=$(printf '%s\n' "$stream" | sed -n 's/^MOCKSTREAM:LABEL=\([^ ]*\).*/\1/p' | head -1)
+    # FIX #56: detect incremental (-i) vs resume (-t) vs full from the
+    # embedded stream ARGS, needed to simulate real zfs's "destination
+    # exists, need -F" refusal correctly - that refusal only applies to
+    # full (non-incremental, non-resume) streams; an incremental/resume
+    # receive is SUPPOSED to target an existing destination.
+    args_field=$(printf '%s\n' "$stream" | sed -n 's/^MOCKSTREAM:LABEL=[^ ]* ARGS=\(.*\)$/\1/p' | head -1)
+    is_incremental=0
+    case "$args_field" in
+      "-i "*|"-t "*) is_incremental=1 ;;
+    esac
 
     if [ "${MOCK_ZFS_FAIL_RECEIVE:-0}" = 1 ]; then
       echo "cannot receive: mock injected failure" >&2
@@ -210,6 +268,16 @@ case "$cmd" in
       grep -v "^${ds}::resume::" "$MOCK_STATE" > "$MOCK_STATE.tmp" 2>/dev/null
     mv "$MOCK_STATE.tmp" "$MOCK_STATE" 2>/dev/null || true
       echo "${ds}::resume::MOCKTOKEN::${label}::$$" >> "$MOCK_STATE"
+      exit 1
+    fi
+
+    # FIX #56: a full stream (not incremental, not resume) targeting an
+    # already-existing destination without -F must be refused, matching
+    # real zfs - this is exactly the sibling-target empty-parent-
+    # placeholder scenario FIX #54/#56 exist to handle correctly.
+    if [ "$is_incremental" != 1 ] && [ "$hasF" != 1 ] && grep -qxF "$ds" "$MOCK_STATE" 2>/dev/null; then
+      echo "cannot receive new filesystem stream: destination '$ds' exists" >&2
+      echo "must specify -F to overwrite it" >&2
       exit 1
     fi
 

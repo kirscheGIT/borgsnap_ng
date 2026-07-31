@@ -85,6 +85,24 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # FIX #46: the pool name is the target's first path component -
         # needed to check/attempt import before touching anything on it.
         bckndZfsSend_pool="${bckndZfsSend_target%%/*}"
+        # FIX #51: a target starting with "/" (a natural mistake - it looks
+        # like a filesystem path) makes the pool-name extraction above
+        # produce an EMPTY string, which would otherwise silently cascade
+        # into a confusing "pool '' could not be imported" failure much
+        # later, far from the actual mistake. ZFS dataset paths are
+        # "pool/dataset/path", never filesystem paths, and never start
+        # with "/" - catch this immediately instead, with a message that
+        # points at the actual fix.
+        if [ -z "$bckndZfsSend_pool" ]; then
+            unset bckndZfsSend_CALLINGFUCNTION
+            unset bckndZfsSend_remotecmd
+            unset bckndZfsSend_dataset
+            unset bckndZfsSend_label
+            unset bckndZfsSend_keepduration
+            unset bckndZfsSend_targetdataset
+            unset bckndZfsSend_pool
+            die "zfssend: target '$bckndZfsSend_target' starts with '/' - ZFS dataset paths are 'pool/dataset/path', not filesystem paths, and must never have a leading slash. Did you mean '${bckndZfsSend_target#/}'?"
+        fi
         # FIX #43: a bookmark name is scoped per-target (via this slug), so
         # the same source dataset can be sent to more than one zfssend
         # target, each tracked independently.
@@ -154,22 +172,36 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
 
         if [ -n "$bckndZfsSend_resumetoken" ]; then
             bckndZfsSend_mode="resume"
-        elif zfs list -H "$bckndZfsSend_targetdataset" >/dev/null 2>&1; then
+        elif [ -n "$(zfs list -H -t snapshot -o name "$bckndZfsSend_targetdataset" 2>/dev/null)" ]; then
+            # FIX #54: check for the target having at least one snapshot
+            # of its OWN, not just "does the dataset exist". A target
+            # that has one or more sibling zfssend destinations nested
+            # underneath it (e.g. sending both "tank/data" and
+            # "tank/data/child" to the same target prefix) gets its
+            # parent hierarchy auto-created via "zfs create -p" purely to
+            # make room for the CHILD's own target - that parent dataset
+            # genuinely exists afterward, but was never itself an actual
+            # send destination, so it has zero snapshots. Checking bare
+            # existence would wrongly treat that empty scaffold dataset
+            # as "must have a bookmark from a previous send", producing a
+            # confusing "bookmark is missing" error for a target that was
+            # never really sent to in the first place.
+            #
             # FIX #43: full vs incremental. If the target dataset already
-            # exists (and there's no resume in progress), this must be an
-            # incremental send, which requires the bookmark left behind by
-            # the previous successful send - a bookmark survives even if
-            # the snapshot it pointed to has since been destroyed by
-            # source-side retention (pruneZFSSnapshot), which is exactly
-            # the problem plain snapshot-to-snapshot incrementals can't
-            # survive.
+            # has snapshots (and there's no resume in progress), this
+            # must be an incremental send, which requires the bookmark
+            # left behind by the previous successful send - a bookmark
+            # survives even if the snapshot it pointed to has since been
+            # destroyed by source-side retention (pruneZFSSnapshot),
+            # which is exactly the problem plain snapshot-to-snapshot
+            # incrementals can't survive.
             if ! zfs list -t bookmark -H "$bckndZfsSend_bookmark" >/dev/null 2>&1; then
                 unset bckndZfsSend_remotecmd
                 unset bckndZfsSend_keepduration
                 unset bckndZfsSend_resumetoken
                 unset bckndZfsSend_pool
                 unset bckndZfsSend_pool_imported_by_us
-                die "zfssend: target dataset '$bckndZfsSend_targetdataset' already exists but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
+                die "zfssend: target dataset '$bckndZfsSend_targetdataset' already has snapshots but its tracking bookmark '$bckndZfsSend_bookmark' is missing - can't determine what has already been sent. This shouldn't happen in normal operation (the bookmark is created automatically after every successful send). If you're recovering from a manually deleted bookmark, either restore it, or destroy the target dataset to force a fresh full send."
             fi
             bckndZfsSend_mode="incremental"
         else
@@ -197,9 +229,32 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
                 ;;
             full)
                 msg "DEBUG" "Full send: $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
-                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive -s $bckndZfsSend_targetdataset"
+                msg "DEBUG" "exec_cmd parameters in $LASTFUNC: zfs send $bckndZfsSend_dataset@$bckndZfsSend_label | zfs receive -s -F $bckndZfsSend_targetdataset"
+                # FIX #56: -F here is safe and necessary, not a general
+                # destructive-receive risk:
+                #   - necessary: plain "zfs receive" (no -F) refuses
+                #     outright with "destination exists, must specify -F"
+                #     if the target dataset already exists AT ALL - even
+                #     with zero snapshots of its own. That's exactly a
+                #     sibling zfssend target's auto-created empty parent
+                #     placeholder (FIX #54's scenario: e.g. sending both
+                #     "tank/data" and "tank/data/child" to the same target
+                #     prefix creates "targetprefix/tank/data" as an empty
+                #     container while actually receiving into
+                #     "targetprefix/tank/data/child" underneath it).
+                #   - safe: by the time "full" mode is chosen at all,
+                #     FIX #54's own check has already confirmed the target
+                #     has zero snapshots of its own - -F's "rollback to
+                #     most recent snapshot" has nothing to discard. The
+                #     man page's much scarier "-F destroys filesystems not
+                #     present on the sending side" danger is specifically
+                #     documented for REPLICATION streams (zfs send -R) -
+                #     our code never sends with -R, so a real child
+                #     dataset like first_child_set is never touched by
+                #     this; -F here only ever affects the target dataset's
+                #     own (empty) history, nothing nested underneath it.
                 { zfs send "$bckndZfsSend_dataset@$bckndZfsSend_label"; echo "$?" > "$bckndZfsSend_sendrc_file"; } | \
-                { zfs receive -s "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
+                { zfs receive -s -F "$bckndZfsSend_targetdataset"; echo "$?" > "$bckndZfsSend_recvrc_file"; }
                 ;;
             *)
                 msg "DEBUG" "Incremental send: $bckndZfsSend_bookmark -> $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset"
@@ -220,13 +275,27 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         unset bckndZfsSend_remotecmd
 
         # NOTE: LASTFUNC is deliberately NOT restored to the caller before
-        # these err_hdlr calls (fixing a latent bug from step 1, where it
-        # was restored too early and would have misattributed the failure
-        # to the wrong function in the error log). A failed resume leaves
-        # the resume token in place (the mock and real zfs both do this
-        # automatically - the token is only cleared on a successful
-        # receive), so the next run will simply try to resume again.
+        # building these ERROR messages (matching the die-message pattern
+        # used throughout this file) - restoring it too early would
+        # misattribute the failure to the wrong function in the log. A
+        # failed resume leaves the resume token in place (the mock and
+        # real zfs both do this automatically - the token is only cleared
+        # on a successful receive), so the next run will simply try to
+        # resume again.
         if [ "$bckndZfsSend_sendrc" -ne 0 ]; then
+            # FIX #59: log loudly and return instead of calling err_hdlr
+            # directly (which always aborts the whole process, bypassing
+            # exec_cmd's FIX #36/#57 carve-out mechanism entirely, since
+            # it's called here directly rather than through exec_cmd). One
+            # zfssend target failing (e.g. a stale/mismatched incremental
+            # base) must not abort backups to every OTHER configured repo
+            # that comes after it in REPOLIST - the dispatch loop in
+            # bckp_hdlr.sh already runs under "set +e" and doesn't check
+            # our return value, so returning here lets it continue
+            # normally to the next repo.
+            msg "ERROR" "zfssend: send failed (exit $bckndZfsSend_sendrc) for $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset - skipping this target, continuing with remaining repos"
+            LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
+            unset bckndZfsSend_CALLINGFUCNTION
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
             unset bckndZfsSend_targetdataset
@@ -236,9 +305,12 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_recvrc
             unset bckndZfsSend_pool
             unset bckndZfsSend_pool_imported_by_us
-            err_hdlr "$bckndZfsSend_sendrc"
+            return 1
         fi
         if [ "$bckndZfsSend_recvrc" -ne 0 ]; then
+            msg "ERROR" "zfssend: receive failed (exit $bckndZfsSend_recvrc) for $bckndZfsSend_dataset@$bckndZfsSend_label -> $bckndZfsSend_targetdataset - skipping this target, continuing with remaining repos"
+            LASTFUNC="$bckndZfsSend_CALLINGFUCNTION"
+            unset bckndZfsSend_CALLINGFUCNTION
             unset bckndZfsSend_dataset
             unset bckndZfsSend_label
             unset bckndZfsSend_targetdataset
@@ -247,7 +319,7 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
             unset bckndZfsSend_keepduration
             unset bckndZfsSend_pool
             unset bckndZfsSend_pool_imported_by_us
-            err_hdlr "$bckndZfsSend_recvrc"
+            return 1
         fi
 
         # FIX #44: for a resumed transfer, the label that actually landed
@@ -302,6 +374,69 @@ if [ -z "${ZFS_SEND_HDLR_SOURCED+x}" ]; then
         # nothing source-specific baked in). Without this, the target would
         # accumulate every sent snapshot forever.
         pruneZFSSnapshot "$bckndZfsSend_targetdataset" "$bckndZfsSend_label" "$bckndZfsSend_keepduration" ""
+
+        # RESTORE_VERIFY: mount the target's own just-received snapshot
+        # (readonly=on already blocks writes at the ZFS level regardless
+        # of mount options) and read back the canary file
+        # startBackupMachine wrote into the live SOURCE dataset before
+        # this run's snapshot - proves the actual restore path (import if
+        # needed, mount, read) works for THIS target, which a successful
+        # zfs receive alone doesn't show (that only proves the bytes
+        # transferred without a checksum error, not that mounting and
+        # reading back actually works). Must run before the pool-export
+        # step below - once exported, the pool (and this target) is
+        # unreachable to mount at all.
+        if [ "${RESTOREVERIFY_ACTIVE:-off}" = "on" ]; then
+            bckndZfsSend_restorescratch=$(mktemp -d)
+            export RESTOREVERIFY_MOUNT_IN_PROGRESS=1
+            if sudo mount -t zfs "$bckndZfsSend_targetdataset@$bckndZfsSend_label" "$bckndZfsSend_restorescratch" >/dev/null 2>&1; then
+                unset RESTOREVERIFY_MOUNT_IN_PROGRESS
+                bckndZfsSend_restoreactual=$(cat "$bckndZfsSend_restorescratch/$RESTOREVERIFY_CANARY_RELPATH" 2>/dev/null | sha256sum | cut -d' ' -f1)
+                sudo umount "$bckndZfsSend_restorescratch" >/dev/null 2>&1
+                if [ "$bckndZfsSend_restoreactual" != "$RESTOREVERIFY_CANARY_HASH" ]; then
+                    msg "ERROR" "restore verification FAILED for zfssend target '$bckndZfsSend_targetdataset' - canary content mismatch after mount (expected $RESTOREVERIFY_CANARY_HASH, got $bckndZfsSend_restoreactual). The restore path may be broken for this target."
+                    RESTOREVERIFY_FAILED=1
+                else
+                    msg "INFO" "restore verification passed for zfssend target '$bckndZfsSend_targetdataset'"
+                fi
+                unset bckndZfsSend_restoreactual
+            else
+                unset RESTOREVERIFY_MOUNT_IN_PROGRESS
+                msg "ERROR" "restore verification FAILED for zfssend target '$bckndZfsSend_targetdataset' - could not mount the target snapshot for verification. The restore path itself may be broken for this target."
+                RESTOREVERIFY_FAILED=1
+            fi
+            rmdir "$bckndZfsSend_restorescratch" 2>/dev/null
+            unset bckndZfsSend_restorescratch
+        fi
+
+        # Capacity/fill-level check for the zfssend target pool, while
+        # it's still guaranteed imported and reachable (must happen
+        # before the possible export below, or the pool may no longer be
+        # queryable).
+        bckndZfsSend_capline=$(zpool list -Hp -o cap,free "$bckndZfsSend_pool" 2>/dev/null)
+        if [ -n "$bckndZfsSend_capline" ]; then
+            bckndZfsSend_cappct=$(printf '%s\n' "$bckndZfsSend_capline" | cut -f1)
+            bckndZfsSend_capfreebytes=$(printf '%s\n' "$bckndZfsSend_capline" | cut -f2)
+            case "$bckndZfsSend_cappct" in
+                ''|*[!0-9]*)
+                    msg "DEBUG" "zfssend: could not parse pool capacity for '$bckndZfsSend_pool' - skipping capacity check this run"
+                    ;;
+                *)
+                    bckndZfsSend_capfreehuman=$(awk -v b="$bckndZfsSend_capfreebytes" 'BEGIN{if(b>=1099511627776)printf "%.1f TB",b/1099511627776;else if(b>=1073741824)printf "%.1f GB",b/1073741824;else if(b>=1048576)printf "%.1f MB",b/1048576;else printf "%d B",b}')
+                    if [ -n "${CAPACITY_WARN_PERCENT:-}" ] && [ "$bckndZfsSend_cappct" -ge "$CAPACITY_WARN_PERCENT" ]; then
+                        msg "WARNING" "zfssend target pool '$bckndZfsSend_pool' is ${bckndZfsSend_cappct}% full ($bckndZfsSend_capfreehuman free) - at or above the configured CAPACITY_WARN_PERCENT=$CAPACITY_WARN_PERCENT"
+                    else
+                        msg "INFO" "zfssend target pool '$bckndZfsSend_pool' fill level: ${bckndZfsSend_cappct}% used, $bckndZfsSend_capfreehuman free"
+                    fi
+                    unset bckndZfsSend_capfreehuman
+                    ;;
+            esac
+            unset bckndZfsSend_cappct
+            unset bckndZfsSend_capfreebytes
+        else
+            msg "DEBUG" "zfssend: 'zpool list' produced no output for pool '$bckndZfsSend_pool' - capacity check skipped"
+        fi
+        unset bckndZfsSend_capline
 
         # FIX #46: export the pool again if WE were the one who imported
         # it - leave an already-attached (permanent) pool alone. A failed

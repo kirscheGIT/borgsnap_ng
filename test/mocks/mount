@@ -1,4 +1,28 @@
 #!/bin/sh
+# TESTKIT_VERSION=2026-07-20.40
+# Fault injection (unset/empty = normal behavior):
+#   MOCK_MOUNT_FAIL_RC=<code>   any mount call exits with this code
+#     instead of 0 - but ONLY while RESTOREVERIFY_MOUNT_IN_PROGRESS is
+#     set (a marker the real code sets around its own restore-check
+#     mount specifically), so this doesn't also fail the earlier,
+#     unrelated source-side snapshot mount. Used to test RESTORE_VERIFY's
+#     "could not mount the target snapshot" failure path.
+#   MOCK_MOUNT_CANARY_CONTENT=<value>   writes this content to
+#     "<mount-destination>/.borgsnap_ng_canary" after a successful mount -
+#     simulates the target snapshot's own captured canary file, for
+#     testing RESTORE_VERIFY's zfssend-side mount-and-read check without
+#     needing a real end-to-end zfs send/receive pipeline in the mock.
 : "${MOCK_LOG:=/tmp/borgsnap_mock.log}"
 echo "mount $*" >> "$MOCK_LOG"
+if [ -n "${MOCK_MOUNT_FAIL_RC:-}" ] && [ "$MOCK_MOUNT_FAIL_RC" -ne 0 ] && [ -n "${RESTOREVERIFY_MOUNT_IN_PROGRESS:-}" ]; then
+  echo "mount: simulated failure (MOCK_MOUNT_FAIL_RC)" >&2
+  exit "$MOCK_MOUNT_FAIL_RC"
+fi
+if [ -n "${MOCK_MOUNT_CANARY_CONTENT:-}" ]; then
+  dest=""
+  for a in "$@"; do dest="$a"; done
+  if [ -d "$dest" ]; then
+    printf '%s\n' "$MOCK_MOUNT_CANARY_CONTENT" > "$dest/.borgsnap_ng_canary" 2>/dev/null
+  fi
+fi
 exit 0

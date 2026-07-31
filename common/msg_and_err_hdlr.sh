@@ -8,8 +8,6 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
     
     set -u
 
-    printf "msg_and_err_hdlr.sh invoked \n"
-
     if [ -z "${LASTFUNC+x}" ]; then
         export LASTFUNC=""
     fi
@@ -109,7 +107,7 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
             "$@"  # Execute the command passed as arguments
             lexit_status="$?"  # noqa:unset - see comment above; carries the return value
             msg "DEBUG" "Error status is $lexit_status"
-            if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] ; then
+            if [ "$lexit_status" -ne 0 ] && [ "$LASTFUNC" != "createBorg" ] && [ "$LASTFUNC" != "initBorg" ] && [ "$LASTFUNC" != "pruneBorg" ] ; then
                 IFS="$exec_cmd_OLD_IFS"
                 err_hdlr "$lexit_status"  # Handle the error if the command failed
             fi
@@ -130,6 +128,19 @@ if [ -z "${MSG_AND_ERR_HDLR_SOURCED+x}" ]; then
         }
 
          die() {
+            # FIX #53: mirror err_hdlr's cleanup - without this, a die()
+            # call firing after a successful mount (e.g. any of this
+            # project's own config-validation messages, or a genuinely
+            # unexpected failure past that point) leaves the mount stuck
+            # indefinitely. Nothing else ever cleans it up: the manifest
+            # is per-run, so a LATER run has no way to know about a mount
+            # a DIFFERENT, already-exited process left behind - it just
+            # silently blocks every future mount at that same path with
+            # "directory is not empty" until someone notices and manually
+            # unmounts it.
+            if [ "${LASTFUNC:-}" != "unmountZFSSnapshot" ] && [ -n "${MOUNT_BORG_BASE_DIR:-}" ]; then
+                umountZFSSnapshot "$MOUNT_BORG_BASE_DIR" 2>/dev/null
+            fi
             echo "$0: $*" >&2
             exit 1
         }

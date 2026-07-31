@@ -25,6 +25,14 @@ no separate implementation to keep in sync.
 
 ## systemd (Debian/Proxmox, or anywhere systemd is your init)
 
+If you installed via `install.sh` (see the main README), the steps below
+already happened - it copies both unit files, sets `ExecStart=` to your
+actual install path, and adds `User=`/`Group=` for the dedicated backup
+user. `setup-backup.sh` goes one step further and does the actual
+`systemctl enable --now borgsnap-ng@<config>.timer` for you, per config,
+including a custom `OnCalendar=` schedule if you want one - read on only
+if you're doing this by hand instead.
+
 ```
 cp ops/systemd/borgsnap-ng@.service /etc/systemd/system/
 cp ops/systemd/borgsnap-ng@.timer   /etc/systemd/system/
