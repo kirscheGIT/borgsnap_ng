@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.37
+# TESTKIT_VERSION=2026-07-20.38
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -696,6 +696,7 @@ assert "FIX50: no shell ls/mkdir was attempted (BorgBase can't run those at all)
 
 # Scenario B: repo already initialized (rc 0) -> no init, straight to create.
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "BORG_INIT:ssh://borgbase_repo/./repo" >> "$MOCK_STATE"
 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_alreadyinit.log" 2>&1
 RC_ALREADYINIT=$?
 assert "FIX50: rc 0 (already initialized) - run succeeds" "[ $RC_ALREADYINIT -eq 0 ]"
@@ -1223,6 +1224,7 @@ assert "FIX58: immediate success - no retry warning logged" \
 # Scenario B: fails once, then succeeds on retry - repo correctly detected
 # as already existing, init skipped, and the retry is visibly logged.
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "BORG_INIT:ssh://mocksshhost/./test_repo" >> "$MOCK_STATE"
 rm -f "$WORKDIR14/ssh_ls_counter"
 MOCK_SSH_COUNTER_FILE="$WORKDIR14/ssh_ls_counter" MOCK_SSH_FAIL_COUNT=1 sh ./borgsnap_ng.sh run "$WORKDIR14/test14-remote.conf" > "$WORKDIR14/run_retry.log" 2>&1
 RC_RETRY=$?
@@ -2120,6 +2122,57 @@ assert "FIX68: CACHEMODE from the config ('mtime,size') is actually used, not th
   "grep -q -- '--files-cache=mtime,size' '$MOCK_LOG'"
 assert "FIX68: the stale hardcoded compression value no longer appears anywhere" \
   "! grep -q 'auto,zstd,9' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "Existing-but-never-initialized repo directory (real-world bug, FIX #69)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: a repo directory that already exists
+# (e.g. pre-created by setup-backup.sh, which deliberately only creates
+# the directory - initialization is this script's own job) but was
+# never actually borg-init'd. The old logic used "does the directory
+# exist" as a stand-in for "is this already an initialized repo", so
+# init was silently skipped and createBorg failed with "not a valid
+# repository". Directory is pre-created here WITHOUT any "BORG_INIT:"
+# seed in MOCK_STATE, precisely matching that real-world state.
+WORKDIR28="$(mktemp -d)"
+mkdir -p "$WORKDIR28/repo1"
+MAILKEYFILE28="$WORKDIR28/test28.key"; echo "testpassphrase" > "$MAILKEYFILE28"; chmod 600 "$MAILKEYFILE28"
+cat > "$WORKDIR28/test28-existingdir.conf" << EOF47
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE28"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR28/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF47
+chmod 600 "$WORKDIR28/test28-existingdir.conf"
+export MOCK_LOG="$WORKDIR28/mock.log"
+export MOCK_STATE="$WORKDIR28/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR28/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR28/test28-existingdir.conf" > "$WORKDIR28/run_existingdir.log" 2>&1
+RC_EXISTINGDIR=$?
+assert "FIX69: run succeeds despite the directory pre-existing without being borg-init'd" "[ $RC_EXISTINGDIR -eq 0 ]"
+assert "FIX69: borg init actually ran against the pre-existing (but uninitialized) directory" \
+  "grep -q '^borg init' '$MOCK_LOG'"
+assert "FIX69: borg create succeeded afterward, not 'not a valid repository'" \
+  "grep -q '^borg create' '$MOCK_LOG' && ! grep -q 'not a valid repository' '$WORKDIR28/run_existingdir.log'"
+
+# Second run against the SAME (now genuinely initialized) repo must NOT
+# attempt init again.
+: > "$MOCK_LOG"
+sh ./borgsnap_ng.sh run "$WORKDIR28/test28-existingdir.conf" > "$WORKDIR28/run_second.log" 2>&1
+RC_SECOND=$?
+assert "FIX69: second run against the now-real repo succeeds" "[ $RC_SECOND -eq 0 ]"
+assert "FIX69: second run does not attempt init again" "! grep -q '^borg init' '$MOCK_LOG'"
 
 
 echo "-------------------------------------"

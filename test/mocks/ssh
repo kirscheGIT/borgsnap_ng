@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.37
+# TESTKIT_VERSION=2026-07-20.38
 # Mock ssh, used by direxists()/dircreate() for ssh:// repo paths.
 # Usage as invoked by our code: ssh <host> <command...>
 #

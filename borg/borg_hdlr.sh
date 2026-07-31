@@ -297,6 +297,89 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         return "$pruneBorg_failed"
     }
 
+    ensureBorgInit(){
+        # FIX #69: generalizes ensureBorgBaseInit's approach (borg's own
+        # exit code, not filesystem existence, decides whether init is
+        # needed) to the generic case - a local path or a normal (non-
+        # BorgBase) ssh:// repo. Unlike BorgBase, a missing path here CAN
+        # be created, so this handles that too, unlike
+        # ensureBorgBaseInit's hard "die, can't create one" for that case.
+        #
+        # Without this, "the directory/path exists" (checked via
+        # direxists) was being used as a stand-in for "this is already an
+        # initialized borg repository" - which are different things. A
+        # directory that exists but was never actually borg-init'd (e.g.
+        # one this project's own setup-backup.sh deliberately only
+        # creates, leaving initialization to this script, since that's
+        # this script's own job) was silently treated as "nothing to do
+        # here", and createBorg then failed with "not a valid repository"
+        # - a confusing failure for what's actually a completely normal,
+        # expected first-run state.
+        #
+        # $1 - mandatory repo path (local path or ssh://...)
+        # $2 - optional borg remote command
+        # $3 - optional encryption mode for a fresh init (default: repokey)
+        # Returns 0 if the repo ends up usable (already initialized, or
+        # freshly initialized successfully this call), nonzero if
+        # initBorg was needed and failed.
+        ensureBorgInit_CALLINGFUCNTION="$LASTFUNC"
+        LASTFUNC="ensureBorgInit"
+        ensureBorgInit_repo="$1"
+        ensureBorgInit_remotecmd="$2"
+        ensureBorgInit_encryption="${3:-repokey}"
+        ensureBorgInit_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
+
+        if ! direxists "$ensureBorgInit_repo"; then
+            msg "INFO" "Creating repo directory: $ensureBorgInit_repo"
+            dircreate "$ensureBorgInit_repo"
+        fi
+
+        if [ -n "$ensureBorgInit_remotecmd" ]; then
+            ensureBorgInit_remotepath="--remote-path=${ensureBorgInit_remotecmd}"
+        else
+            ensureBorgInit_remotepath="--remote-path=borg"
+        fi
+
+        ensureBorgInit_listcmd="borg list $ensureBorgInit_remotepath \"$ensureBorgInit_repo\""
+        msg "DEBUG" "repo state check: $ensureBorgInit_listcmd"
+        # Only the exit code matters here - see FIX #62's comment on
+        # ensureBorgBaseInit for why the archive listing itself must not
+        # be allowed to leak to stdout unconditionally.
+        eval "$ensureBorgInit_listcmd" >/dev/null 2>&1
+        ensureBorgInit_listrc=$?
+        msg "DEBUG" "repo state check exit code: $ensureBorgInit_listrc"
+
+        if [ "$ensureBorgInit_listrc" -eq 0 ]; then
+            msg "DEBUG" "repo '$ensureBorgInit_repo' already initialized"
+        else
+            # Deliberately not trying to distinguish every possible exit
+            # code here (unlike ensureBorgBaseInit, which can afford to
+            # since BorgBase's transport/exit-code behavior is fixed and
+            # well understood) - a generic repo could be a fresh local
+            # directory, a brand-new remote path, or any of several
+            # provider-specific quirks, and refusing to attempt init on
+            # anything but one exact expected code would turn every such
+            # edge case into a hard failure instead of just trying. If
+            # init itself then fails (e.g. it turns out the repo really
+            # was already valid and this was a transient listing hiccup),
+            # initBorg's own error handling reports that clearly.
+            msg "INFO" "repo '$ensureBorgInit_repo' is not yet a valid borg repository (borg list exit $ensureBorgInit_listrc) - running borg init"
+            if ! initBorg "$ensureBorgInit_repo" "$ensureBorgInit_remotecmd" "$ensureBorgInit_encryption"; then
+                ensureBorgInit_failed=1 # noqa:unset - see the initial assignment above
+            fi
+        fi
+
+        LASTFUNC="$ensureBorgInit_CALLINGFUCNTION"
+        unset ensureBorgInit_CALLINGFUCNTION
+        unset ensureBorgInit_repo
+        unset ensureBorgInit_remotecmd
+        unset ensureBorgInit_encryption
+        unset ensureBorgInit_remotepath
+        unset ensureBorgInit_listcmd
+        unset ensureBorgInit_listrc
+        return "$ensureBorgInit_failed"
+    }
+
     ensureBorgBaseInit(){
         # FIX #50: BorgBase (and any similarly locked-down "borg repo
         # hosting" provider) forces every SSH login to run "borg serve"
@@ -650,32 +733,27 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         if [ "$backendBorg_repotype" = "borgbase" ]; then
             ensureBorgBaseInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
         else
-            if ! direxists "$backendBorg_repo"; then
-                msg "INFO" "Creating repo directory: $backendBorg_repo"
-                dircreate "$backendBorg_repo"
-                msg "INFO" "Init Borg repo: $backendBorg_repo"
-                if ! initBorg "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"; then
-                    # FIX #57: initBorg already logged the failure loudly
-                    # and returned nonzero - this repo isn't usable this
-                    # run (createBorg/pruneBorg/checkBorg would just
-                    # cascade into more failures against a never-
-                    # initialized repo). Skip it, but let the dispatch
-                    # loop in bckp_hdlr.sh continue normally to the next
-                    # configured repo, matching FIX #36's philosophy.
-                    LASTFUNC="$backendBorg_CALLINGFUCNTION"
-                    unset backendBorg_CALLINGFUCNTION
-                    unset backendBorg_repo
-                    unset backendBorg_remotecmd
-                    unset backendBorg_label
-                    unset backendBorg_createopts
-                    unset backendBorg_srcpath
-                    unset backendBorg_pruneopts
-                    unset backendBorg_intervallabel
-                    unset backendBorg_encryption
-                    unset backendBorg_repotype
-                    unset backendBorg_verifydepth
-                    return 0
-                fi
+            if ! ensureBorgInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"; then
+                # FIX #57: initBorg (called inside ensureBorgInit) already
+                # logged the failure loudly and returned nonzero - this
+                # repo isn't usable this run (createBorg/pruneBorg/
+                # checkBorg would just cascade into more failures against
+                # a never-initialized repo). Skip it, but let the
+                # dispatch loop in bckp_hdlr.sh continue normally to the
+                # next configured repo, matching FIX #36's philosophy.
+                LASTFUNC="$backendBorg_CALLINGFUCNTION"
+                unset backendBorg_CALLINGFUCNTION
+                unset backendBorg_repo
+                unset backendBorg_remotecmd
+                unset backendBorg_label
+                unset backendBorg_createopts
+                unset backendBorg_srcpath
+                unset backendBorg_pruneopts
+                unset backendBorg_intervallabel
+                unset backendBorg_encryption
+                unset backendBorg_repotype
+                unset backendBorg_verifydepth
+                return 0
             fi
         fi
 

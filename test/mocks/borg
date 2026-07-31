@@ -1,15 +1,20 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.37
+# TESTKIT_VERSION=2026-07-20.38
 # Fault injection (unset/empty = normal behavior):
 #   MOCK_BORG_FAIL_CREATE_REPO=/path/to/repo   "borg create" targeting that
 #     repo (matched as a substring of the repo::archive argument) fails with
 #     exit 1. Used to verify FIX #36 (a failing create for one repo must be
 #     reported, but must not abort backups to the other configured repos).
 #   MOCK_BORG_LIST_RC=<code>   any "borg list" call exits with this code
-#     instead of 0. Used to simulate BorgBase's borg-native repo states
-#     (FIX #50): 15 = Repository.InvalidRepository (exists, not yet
-#     init'd), 13 = Repository.DoesNotExist, or any other real borg exit
-#     code for testing the "unexpected error" path.
+#     instead of checking tracked init state. Used to simulate BorgBase's
+#     borg-native repo states (FIX #50): 15 = Repository.InvalidRepository
+#     (exists, not yet init'd), 13 = Repository.DoesNotExist, or any
+#     other real borg exit code for testing the "unexpected error" path.
+#     Without this, "borg list" checks whether "borg init" was actually
+#     called against this exact repo path earlier in the same test (see
+#     FIX #69) - exit 0 if so, exit 15 ("not a valid repository") if not,
+#     matching real borg's behavior against a path that merely exists as
+#     a directory but was never actually initialized.
 #   MOCK_BORG_CHECK_RC=<code>   any "borg check" call exits with this code
 #     instead of 0. Used to simulate a real "borg check" finding a
 #     problem, for testing BORG_VERIFY's warn-not-die handling.
@@ -34,12 +39,46 @@ if [ "$1" = "create" ] && [ -n "${MOCK_BORG_FAIL_CREATE_REPO:-}" ]; then
     esac
   done
 fi
+if [ "$1" = "create" ]; then
+  # Matches real borg: "create" against a repo path that was never
+  # actually borg-init'd fails with "not a valid repository", same as
+  # "list" does (see FIX #69's own comment above). Without this, the
+  # mock could never actually reproduce that specific failure for
+  # "create" - only for "list" - weakening exactly the test coverage
+  # this real-world bug needed.
+  for arg in "$@"; do
+    case "$arg" in
+      -*|create) ;;
+      *::*)
+        MOCK_CREATE_REPOPATH="${arg%%::*}"
+        if ! grep -qF "BORG_INIT:$MOCK_CREATE_REPOPATH" "${MOCK_STATE:-/dev/null}" 2>/dev/null; then
+          echo "$MOCK_CREATE_REPOPATH is not a valid repository. Check repo config." >&2
+          exit 15
+        fi
+        ;;
+    esac
+  done
+fi
 if [ "$1" = "init" ] && [ -n "${MOCK_BORG_FAIL_INIT_REPO:-}" ]; then
   for arg in "$@"; do
     case "$arg" in
       "${MOCK_BORG_FAIL_INIT_REPO}"*)
         echo "$arg: Permission denied (mock fault injection)" >&2
         exit 1 ;;
+    esac
+  done
+fi
+if [ "$1" = "init" ]; then
+  # Record this repo path as initialized, so a later "borg list" against
+  # the SAME path correctly reports "already initialized" - and,
+  # critically, so a path that was NEVER borg-init'd correctly reports
+  # "not a valid repository" instead of defaulting to always-succeeds,
+  # which would make FIX #69's "is this actually already an initialized
+  # repo, not just an existing directory" check completely untestable.
+  for arg in "$@"; do
+    case "$arg" in
+      -*|init) ;;
+      *) echo "BORG_INIT:$arg" >> "${MOCK_STATE:-/dev/null}" ;;
     esac
   done
 fi
@@ -74,11 +113,25 @@ if [ "$1" = "list" ] && [ -n "${MOCK_BORG_LIST_RC:-}" ] && [ "$MOCK_BORG_LIST_RC
   exit "$MOCK_BORG_LIST_RC"
 fi
 if [ "$1" = "list" ]; then
-  # Real "borg list" prints the archive listing to stdout on success -
-  # simulate that, so a test can verify a caller that only cares about
-  # the exit code (like ensureBorgBaseInit's state check) actually
-  # suppresses it, instead of letting it leak into the log/mail.
-  echo "mockarchive-existing-1        Mon, 2026-01-01 00:00:00 [deadbeef]"
+  MOCK_LIST_REPOPATH=""
+  for arg in "$@"; do
+    case "$arg" in
+      -*|list) ;;
+      *) MOCK_LIST_REPOPATH="$arg" ;;
+    esac
+  done
+  if [ -n "$MOCK_LIST_REPOPATH" ] && grep -qF "BORG_INIT:$MOCK_LIST_REPOPATH" "${MOCK_STATE:-/dev/null}" 2>/dev/null; then
+    # Real "borg list" prints the archive listing to stdout on success -
+    # simulate that, so a test can verify a caller that only cares about
+    # the exit code (like ensureBorgBaseInit's/ensureBorgInit's state
+    # check) actually suppresses it, instead of letting it leak into the
+    # log/mail.
+    echo "mockarchive-existing-1        Mon, 2026-01-01 00:00:00 [deadbeef]"
+    exit 0
+  else
+    echo "$MOCK_LIST_REPOPATH is not a valid repository. Check repo config." >&2
+    exit 15
+  fi
 fi
 if [ "$1" = "check" ] && [ -n "${MOCK_BORG_CHECK_RC:-}" ] && [ "$MOCK_BORG_CHECK_RC" -ne 0 ]; then
   echo "mock borg check: simulated problem found, exit $MOCK_BORG_CHECK_RC (MOCK_BORG_CHECK_RC)" >&2
