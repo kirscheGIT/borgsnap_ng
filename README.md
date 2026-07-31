@@ -101,7 +101,10 @@ sudo ./setup-backup.sh
 with `--install-dir=PATH`), and on request creates the dedicated `borg`
 system user with its least-privilege sudo/tmpfiles setup, plus the
 systemd unit templates. Run `./install.sh --help` for all options, or
-`--dry-run` to preview without changing anything.
+`--dry-run` to preview without changing anything. Safe to re-run on an
+existing install (e.g. for a version update) - it only touches the
+application files themselves, never any `.conf`/`.key` files already
+sitting in the same directory.
 
 `setup-backup.sh` then walks through configuring one actual backup job:
 the user (if you skipped that in install.sh), the destination(s) - local

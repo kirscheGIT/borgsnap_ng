@@ -157,10 +157,21 @@ run chmod 644 "$INSTALL_DIR/cfg_file_hdlr.sh" "$INSTALL_DIR/common/"*.sh "$INSTA
 [ -e "$INSTALL_DIR/sample.conf" ] && run chmod 644 "$INSTALL_DIR/sample.conf"
 [ -e "$INSTALL_DIR/ops/least-privilege/setup-zfs-allow.sh" ] && run chmod 755 "$INSTALL_DIR/ops/least-privilege/setup-zfs-allow.sh"
 
-# Ownership: root:root, world-readable. The running user only ever needs
-# to READ these scripts, never write them - keeping them root-owned means
-# a compromised/misbehaving backup job can't modify its own code.
-run chown -R root:root "$INSTALL_DIR"
+# Ownership: root:root, world-readable, for the application files
+# themselves - the running user only ever needs to READ these scripts,
+# never write them, so keeping them root-owned means a compromised/
+# misbehaving backup job can't modify its own code.
+#
+# FIX #72: deliberately excludes *.conf/*.key - these live in the same
+# directory (written later by setup-backup.sh, or by hand) but are
+# owned by the BACKUP user specifically so it can actually read its own
+# config/passphrase at runtime. A recursive chown here used to catch
+# them too on every run, including re-running this script for a version
+# update on an EXISTING install - silently reassigning every already-
+# working config's key file to root:root and breaking it until someone
+# noticed and fixed it by hand.
+run find "$INSTALL_DIR" -type d -exec chown root:root {} +
+run find "$INSTALL_DIR" -type f ! -name "*.conf" ! -name "*.key" -exec chown root:root {} +
 
 echo ""
 echo "Application files installed."
