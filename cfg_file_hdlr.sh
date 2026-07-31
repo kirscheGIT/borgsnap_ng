@@ -120,10 +120,8 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         export SNAPSHOT_TAG
         msg "DEBUG" "SNAPSHOT_TAG is ${SNAPSHOT_TAG:-<not set>}"
 
-        # [ ] TODO: #20 Modifiy to check if borg user is used
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
-        # [ ] TODO: #31 Automated creation of the PASS file if not existend? @kirscheGIT
         checkFilePerms "$PASS" "PASS (borg passphrase) file"
         BORG_PASSPHRASE=$(cat "$PASS")
         export BORG_PASSPHRASE
@@ -280,8 +278,6 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
             die "Empty FS in $lconfigfile"
         fi
 
-        # [x] TODO: #21 Check $FS variable if empty
-        # [x] TODO: #29 Read the following parameters @kirscheGIT
         # LOCAL_READABLE_BY_OTHERS -> DEFAULT = false
         # COMPRESS -> DEFAULT = "zstd,8"
         # REPOLIST -> No Default - Throw error if empty

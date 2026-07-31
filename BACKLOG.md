@@ -100,3 +100,128 @@ single-interval test config - not from any real-world report.
 fix (well-defined behavior for "no interval qualified this run" - skip
 the dataset entirely with a clear message? fall back to some default
 interval?) needs its own design discussion, not a quick patch.
+
+## zfssend only supports local targets
+
+**What happens:** `zfssend:` REPOLIST entries only work for a local ZFS
+pool/dataset target - there's no support for sending to a remote pool
+over SSH (`zfs send | ssh host zfs receive`, or similar).
+
+**Why deferred:** the initial implementation focused on the local-target
+case (e.g. a USB-attached receive pool). A remote target adds real
+complexity - SSH connectivity/reachability checks matching the borg-side
+ones, remote-side `zpool`/`zfs` command availability and permissions,
+and bookmark/resume handling across a network link that can drop
+mid-transfer. Revisit if a concrete need for remote zfssend targets
+comes up.
+
+## No raw send (zfs send -w) for encrypted source datasets
+
+**What happens:** `zfssend` always does a normal (decrypting) send. If
+the SOURCE dataset itself is ZFS-native-encrypted, there's currently no
+option to send it raw (`zfs send -w`, keeping the data encrypted in
+transit and at the target, without needing the receiving side to have
+the encryption key at all).
+
+**Why deferred:** most setups back up unencrypted source datasets (borg
+itself provides encryption for the borg-side repos), so this hasn't been
+a blocker in practice. Revisit if someone's actual source datasets are
+ZFS-encrypted and they want that property preserved through zfssend
+specifically, rather than relying on borg's own encryption for the
+borg-side destinations.
+
+## No formal OS/filesystem/Borg-version test matrix
+
+**What happens:** the tool has been tested extensively in practice on
+one specific combination (Debian, ZFS, current borg via the mock test
+suite plus real-world sandbox runs), but there's no formal matrix
+covering other Linux distributions, ZFS versions, or older/newer borg
+releases.
+
+**Why deferred:** low practical urgency without a concrete report of a
+problem on a different combination - the mock test suite (230+
+assertions) covers the tool's own logic thoroughly regardless of the
+underlying OS, and the real commands it shells out to (`zfs`, `borg`,
+`ssh`) are the actual compatibility surface. Revisit if a specific
+combination turns out to behave differently.
+
+## Local variable names in cfg_file_hdlr.sh aren't fully unique-prefixed
+
+**What happens:** unlike most of the other script files (which
+consistently prefix every local variable with the owning function's
+name, e.g. `strtBckpMchn_*`, `ensureBorgInit_*`), `cfg_file_hdlr.sh`'s
+own local variables are less consistently named, a holdover from before
+that convention was established project-wide.
+
+**Why deferred:** purely cosmetic/consistency - doesn't cause any actual
+bug (the unset-checker and `set -u` both pass cleanly), just makes this
+one file a little more error-prone to extend than the others. Worth
+doing as a dedicated pass rather than incidentally while touching
+unrelated logic in this file.
+
+## BASEDIR logic needs a rework
+
+**What happens:** `BASEDIR` (sets `BORG_BASE_DIR`, moving borg's
+cache/config directory) is handled with a simple "if set and exists, use
+it; if set and missing, die" check - functional, but never revisited
+since it was first added.
+
+**Why deferred:** works fine for its current, narrow use case (e.g.
+unRAID setups where the home directory isn't persistent). No concrete
+report of a problem with it - revisit if one comes up, or alongside any
+broader config-handling cleanup.
+
+## A few nested if-statements in pruneBorg could be simplified
+
+**What happens:** `pruneBorg`'s per-repo/per-interval branching has a
+few nested `if` statements that could likely be flattened or
+consolidated - noted while writing it, never revisited.
+
+**Why deferred:** purely cosmetic/readability - the logic is correct and
+covered by the mock test suite, just not as clean as it could be.
+
+## REPOSKIP is a global variable, not scoped per-repo
+
+**What happens:** `REPOSKIP` ("LOCAL"/"REMOTE"/"NONE") applies uniformly
+to every repo in `REPOLIST` for a given config - there's no way to skip
+just one specific repo while still processing the others of the same
+type (local vs. remote).
+
+**Why deferred:** the common case (skip all local, or all remote, e.g.
+while a drive is being replaced) is already covered. Per-repo skipping
+would need its own syntax extension to `REPOLIST` - revisit if a
+concrete case needs finer granularity than "all local" / "all remote".
+
+## Recursive snapshot mounting hasn't been specifically test-verified
+
+**What happens:** `RECURSIVE=true` mounts each child filesystem's
+snapshot underneath the parent's snapshot mount point - the mock test
+suite covers the ZFS snapshot/prune side of recursion, but the actual
+recursive *mount* behavior (verifying every child ends up correctly
+nested and later unmounted) hasn't had a dedicated, explicit test pass.
+
+**Why deferred:** no concrete report of a problem with it in practice -
+revisit with a dedicated real-world (non-mocked) test pass, since mount
+nesting is exactly the kind of thing a shell-command mock can't fully
+stand in for.
+
+**Related, unnumbered idea:** it might be worth supporting a "don't
+mount this child" list for a recursively-snapshotted dataset - useful if
+you want the retention/consistency benefits of a recursive ZFS snapshot
+without every child's data actually being included in the borg archive.
+Not designed or committed to yet.
+
+## Parameter sanity checking across functions is uneven
+
+**What happens:** most functions validate their own inputs somewhat -
+`set -u` catches genuinely unset variables, and several config-facing
+values (`PASS`, `BASEDIR`, `FS`, `LOCAL_BORG_USER`, etc.) have explicit
+checks - but there's no single, consistent standard for how thoroughly
+every function validates every parameter it receives.
+
+**Why deferred:** this was flagged early on as an ongoing concern rather
+than a specific, fixable gap - genuinely inconsistent validation depth
+is normal across a codebase that grew incrementally, and tightening it
+further is best done incrementally too (e.g. as part of whatever FIX
+touches a given function next) rather than as one large, high-risk pass
+across everything at once.

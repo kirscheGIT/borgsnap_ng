@@ -47,8 +47,6 @@ if [ -z "${ZFS_SNAP_MOUNT_SOURCED+x}" ]; then
         # [ ] TODO #2 test the recursive snapshot mount @kirscheGIT 
         # [ ] TODO Idea: Test if a "no mount" list can be used or provided - background: The recursive option takes a snapshot for all subvolumes
         # at the same time. But maybe we don't want to backup all of them
-        # [x] TODO #1 put the mount and umount scripts to separate files and set the setuid bit for those scripts, making it possible for the borg
-        # user to mount and unmount snapshots. (Is this also be needed for the createdir functions?) 
         # FIX #5: record every mountpoint in a manifest so umount can tear
         # down exactly what was mounted (in reverse order). The previous
         # umount used find -maxdepth 1 on the base dir, which only ever saw

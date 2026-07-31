@@ -263,4 +263,3 @@ case "$1" in
 esac
 
 exit
-# [ ] TODO: #23 readconfigfile before backup run?

@@ -1,92 +1,67 @@
-# borgsnap_ng is a POSIX compatible fork of borgsnap Backups using ZFS snapshots, borg, and (optionally) remote borg servers like rsync.net, hetzner, ...
+# borgsnap_ng
 
-[ ] TODO: #10 Update README  
-[ ] TODO: #11 Update pre and postscripts  
-[ ] TODO: #12 Sanity check for parameters passed over to funcitons (only partially implemented)  
-[ ] TODO: #13 Abstract ZFS calls to support other FS like btrfs in the future  
-[ ] TODO: #14 Provide Testscripts and files  
-[ ] TODO: #15 Refactor DEBUG and Status Messages  
-[ ] TODO: #16 Provide systemd configuration for timetriggeresd execution and status mails  
-[ ] TODO: #17 Testmatrix - OS - Filesystem - Borg  
-[ ] TODO: #18 Provide installation scripts - Setting borg user as zfs snapshot user,    
+A POSIX-shell fork of [borgsnap](https://github.com/jortan/borgsnap) for
+automated ZFS + [Borg](https://www.borgbackup.org/) backups: ZFS snapshots
+feed local borg repositories, remote borg repositories (including
+[BorgBase](https://www.borgbase.com/)), and/or plain `zfs send` targets,
+all driven by one interval-based retention scheme, with restore-path
+verification built in rather than assumed.
 
+## Key features over the original borgsnap
 
+* **Multiple destination types per dataset** - local borg, remote borg
+  over SSH, BorgBase, and/or `zfssend` (plain ZFS send/receive), all in
+  one `REPOLIST`, each with independent success/failure handling.
+* **`BORG_VERIFY`** - periodic `borg check` at a configurable depth
+  (`repo`/`archive`/`data`) per retention interval, so a corrupted
+  archive is caught proactively instead of during an actual restore.
+* **`RESTORE_VERIFY`** - writes a canary file before each snapshot and
+  confirms it survives a real extract from the freshly created archive,
+  so "the backup completed" and "the backup is actually restorable" are
+  no longer assumed to be the same thing.
+* **`SNAPSHOT_TAG`** - an optional prefix on every ZFS snapshot label,
+  so borgsnap_ng can run on the same dataset as another backup tool
+  (including the original borgsnap) without a snapshot-name collision.
+* **Resilience by design** - one repo failing (network hiccup, wrong
+  passphrase, not yet initialized) is logged clearly and skipped; it
+  does not abort backups to every other configured repo, and does not
+  prevent source-side ZFS retention from running.
+* **`MSG_LEVEL`** - configurable log verbosity (errors only, up through
+  full debug), instead of an all-or-nothing firehose.
+* **Capacity reporting** - logs remaining free space on local repo
+  filesystems and zfssend target pools after each run.
+* **systemd integration** - per-dataset timer/service units and a mail
+  wrapper that reports SUCCESS / SUCCESS (with warnings) / PARTIAL
+  FAILURE / FAILURE, instead of relying on cron's mail-on-any-output.
+* **Interactive setup** - `install.sh` + `setup-backup.sh` walk through
+  installing the tool and configuring each backup job, instead of
+  hand-editing a config file from scratch.
 
-This fork adds:
+**The configuration file must include every option `sample.conf`
+documents**, even ones left empty - `sample.conf` is the authoritative,
+inline-documented reference for every option; this README only
+summarizes the ones most relevant to getting started.
 
-* COMPRESS - variable to specify Borg compression method
-* RECURSIVE - for recursive ZFS snapshot support
-* BASEDIR - set cache/config folders
-* LOCALSKIP - Ignore LOCAL path, create/purge remote backups only
-* REMOTE_BORG_PATH - Configure remote borg command.  Defaults to borg1.
-* PRE_SCRIPT and POST_SCRIPT - Run a script before or after taking ZFS snap
+*If `RECURSIVE=true` (the second field of `FS=`), borgsnap_ng creates
+recursive ZFS snapshots for that filesystem. Each child filesystem's
+snapshot is mounted underneath the parent's snapshot mount, so borg
+backs up the parent and all children in a single archive. Note: ZFS
+snapshot deletion/retention only ever matches the exact configured
+dataset, never its children, even when that dataset was snapshotted
+recursively - see the warning next to `FS=` in `sample.conf` for a
+gotcha this creates if you also back up one of those children
+separately, as its own config entry.*
 
-**The configuration file must include all options present in sample.conf, even
-if the option has no value specified.**
+This assumes borg 1.4 or later (for `BORG_EXIT_CODES=modern` support,
+which several resilience features rely on to distinguish "not yet
+initialized" from "genuinely broken" without guessing).
 
-*If RECURSIVE=true, borgsnap will create recursive ZFS snapshots for all
-nominated FS filesystems.  Each child filesystem snapshot will be mounted
-underneath the snapshot mount of the parent filesystem.  This allows borgsnap
-to backup the parent filesystem and all child filesystems in a single borgbackup
-repository.*
+Finally, these things are probably obvious, but: make sure your local
+backups are on a different physical drive than the data you're backing
+up, and don't skip remote/offsite backups - a local-only backup isn't
+disaster-proofing your data.
 
-*COMPRESS default in sample.conf is zstd*
-
-_BASEDIR will configure BORG_BASE_DIR option, this will move the cache/config
-folders.  Added for unRAID where root home folder is not persistent.  If unset,
-BORG_BASE_DIR will default to $HOME_
-
-_CACHEMODE will configure how Borgbackup detects changed files
-https://borgbackup.readthedocs.io/en/stable/usage/create.html_
-
-_LOCALSKIP will skip LOCAL path for all operations and only perform backups
-and purge operations on REMOTE target._
-
-_REMOTE_BORG_PATH defaults to "borg1" for rsync.net.  Set this to "borg" for
-normal remote borg destinations._ 
-
-_PRE_SCRIPT will run before taking a snapshot for each dataset.  The example
-provided demonstrates how to run a command only for a specific dataset.  Specify
-the full path to the script._
-
-_POST_SCRIPT will run after taking a snapshot for each dataset.  The example
-provided demonstrates how to run a command only for a specific dataset.  Specify
-the full path to the script._
-
-*set -e was removed, this fork of borgsnap will continue running if a command
-fails*
-
-This is a simple script for doing automated daily backups of ZFS filesystems.
-It uses ZFS snapshots, but could easily be adaptable to other filesystems,
-including those without snapshots.
-
-[Borg](https://www.borgbackup.org/) has excellent deduplication, so unchanged
-blocks are only stored once. Borg backups are encrypted and compressed
-(borgsnap uses lz4).
-
-Unlike tools such as Duplicity, borg uses an incremental-forever model so you
-never have to make a full backup more than once. This is really great when
-sending full offsite backups might take multiple days to upload.
-
-Borgsnap has optional integration with rsync.net for offsite backups. rsync.net
-offers a [cheap plan catering to borg](http://www.rsync.net/products/attic.html).
-As rsync.net charges nothing in transfer fees nor penalty fees for early
-deletion, it's a very appealing option that is cheaper than other cloud storage
-providers such as AWS S3 or Google Cloud Storage once you factor in transfer
-costs and fees for deleting data.
-
-Borgsnap automatically purges snapshots and old borg backups (both locally
-and remotely) based on retention settings given in the configuration.
-There is also the possibility to backup an already existing snapshot.
-
-This assumes borg version 1.0 or later.
-
-Finally, these things are probably obvious, but: Make sure your local backups
-are on a different physical drive than the data you are backing up and don't
-forget to do remote backups, because a local backup isn't disaster proofing
-your data.
-
-## borgsnap installation
+## Installation
 
 ### Quick install (recommended)
 
@@ -117,170 +92,128 @@ previews without changing anything, but there's no non-interactive mode,
 since the whole point is walking through the interdependent choices
 rather than skipping straight to flags.
 
-### Manual / older instructions
-
-The steps below predate `install.sh` and reference the original
-`borgsnap` project's config format (`FS=`, `LOCAL=`, `MONTH_KEEP=`, etc.),
-which no longer matches borgsnap_ng's actual `sample.conf` - kept here
-for now, pending a full rewrite, but prefer the Quick install above and
-`sample.conf`'s own inline documentation for anything current.
+## Usage
 
 ```
-git clone git@github.com:jortan/borgsnap.git
-```
-
-generate key:
-```
-pwgen 128 1 > /path/to/my/super/secret/myhost.key
-```
-
-adapt sample.conf
-```
-FS="zroot/root zroot/home zdata/data"
-LOCAL="/backup/borg"
-BASEDIR=""
-LOCAL_READABLE_BY_OTHERS=false
-LOCALSKIP=false
-RECURSIVE=true
-COMPRESS=zstd
-CACHEMODE="mtime,size"
-REMOTE=""
-REMOTE_BORG_COMMAND=
-PASS="/path/to/my/super/secret/myhost.key"
-MONTH_KEEP=1
-WEEK_KEEP=4
-DAY_KEEP=7
-PRE_SCRIPT=
-POST_SCRIPT=
-```
-
-how to:
-```
-usage: borgsnap <command> <config_file> [<args>]
+usage: borgsnap_ng.sh <command> <config_file> [<args>]
 
 commands:
     run             Run backup lifecycle.
-                    usage: borgsnap run <config_file>
+                    usage: borgsnap_ng.sh run <config_file>
 
-    snap            Run backup for specific snapshot.
-                    usage: borgsnap snap <config_file> <snapshot-name>
-					
-    tidy            Unmount and remove snapshots/local backups for today
-                    usage: borgsnap tidy <config_file>
-					
+    snap            Run backup for a specific snapshot.
+                    usage: borgsnap_ng.sh snap <config_file> <snapshot-name>
+
+    tidy            Unmount and remove today's snapshots/local backups.
+                    usage: borgsnap_ng.sh tidy <config_file>
+
                     Added for test/dev purposes, may not work as intended!
-
-                    Note: this will unmount all snapshots mounted by borgsnap
-                    including other running instances.	
+                    Note: this unmounts every snapshot mounted by
+                    borgsnap_ng, including other running instances.
 ```
 
-## how it works
+If you used `setup-backup.sh`, a systemd timer already calls `run` for
+you on schedule - `mail_wrapper.sh` (see `ops/systemd/`) wraps that call
+to send a status email. Manual/ad-hoc runs use `borgsnap_ng.sh` directly.
 
-Borgsnap is pretty simple, it has the following basic flow:
+## How it works
 
-+ Read configuration file and encryption key file
-+ Validate output directory exists and a few other basics
-+ For each ZFS filesystem do the following steps:
-  + Initialize borg repositories if local one doesn't exist
-  + Take a ZFS snapshot of the filesystem (recursively if enabled)
-  + Run borg for the local output if configured
-  + Run borg for the rsync.net output if configured
-  + Delete old ZFS snapshots (exact dataset match only - see note below)
-  + Prune local borg if configured and needed
-  + Prune rsync.net borg if configured and needed
+For each configured filesystem, per run:
 
-That's it!
+1. Read the config file and encryption key file; validate the basics
+   (output directory exists, the executing user matches
+   `LOCAL_BORG_USER`, etc.).
+2. Work out which retention interval (monthly/weekly/daily) qualifies
+   today, and take a ZFS snapshot for it (recursively, if configured) -
+   reusing an existing snapshot for today's label instead of failing if
+   one's already there.
+3. For each configured repo/target in `REPOLIST`:
+   * Local or remote borg: initialize the repo if needed, `borg create`,
+     `borg prune`, and (if `BORG_VERIFY` says so) `borg check` at the
+     configured depth.
+   * BorgBase: same, but repo existence/init state is detected via
+     `borg list`'s own exit code, since BorgBase's restricted SSH access
+     doesn't allow arbitrary shell commands.
+   * zfssend: incremental `zfs send`/`zfs receive` to a local or bookmark-
+     tracked target dataset instead of a borg archive.
+   * If `RESTORE_VERIFY` is enabled for today's interval, extract the
+     freshly created archive (or check the zfssend target) and confirm
+     the canary file written before the snapshot survived intact.
+   * One repo's failure (unreachable, wrong passphrase, transient error)
+     is logged clearly and that repo is skipped - it does not abort the
+     other configured repos.
+4. Unmount the snapshot, then prune old ZFS snapshots for this dataset's
+   interval according to `RETENTIONPERIOD` - independent of any single
+   repo's prune outcome above.
 
-Note: ZFS snapshot deletion/retention matches only the exact configured
-dataset, never its children - even if that dataset was snapshotted
-recursively. If you back up a dataset both recursively (as a parent) and
-separately as its own independent config entry for one of its children,
-see the warning next to `FS=` in `sample.conf` for a gotcha this creates
-with orphaned snapshots.
+That's it, once per configured filesystem.
 
-If things fail, it is not currently re-entrant. For example, if a ZFS snapshot
-already exists for the day, the script will fail\*.  This could use a bit of
-battle hardening, but has been working well for me for several months already.
-
-\* If the script does fail, you can use "tidy" option.  This will make best
-effort to remove any mountpoints, delete today's zfs snapshots and borg
-archives, allowing borgsnap to be run again that day.  This was added mostly
-for test/dev purposes and may not work as intended!
-
+If a run is interrupted or fails partway through, it's re-entrant: a
+snapshot that already exists for today's label is reused, not treated as
+a fatal error (though see `BACKLOG.md` for one known edge case around
+`zfssend` bookmarks on a same-day retry). The `tidy` command exists as a
+best-effort manual cleanup for test/dev use, unmounting and removing
+today's snapshots/archives so a run can be repeated - it predates the
+re-entrancy above and isn't normally needed anymore.
 
 ## Restoring files
 
-Borgsnap doesn't help with restoring files, it just backs them up. Restorations
-are done directly from borg (or ZFS snapshots if it's a simple file deletion to
-be restored). A backup that can't be restored from is useless, so you need to
-test your backups regularly.
+borgsnap_ng doesn't help with restoring files, it just backs them up.
+Restoration is done directly with borg (or straight from the ZFS
+snapshot, for a simple accidental deletion). A backup that can't be
+restored from is useless - `RESTORE_VERIFY` catches the most common way
+that happens automatically, but you should still test a real restore
+periodically.
 
-For Borgsnap, there are three ways to restore, depending on why you need to:
+Depending on why you need to restore:
 
-+ Use the local ZFS snapshot (magic .zfs directory on each ZFS filesystem).
-This is the way to go if you simply deleted a file and there is no hardware
-failure.
+* **Local ZFS snapshot** (the dataset's `.zfs/snapshot/` directory) -
+  the way to go for a simple accidental deletion with no hardware
+  failure involved.
+* **Local borg repository** - if there's data loss on the source
+  filesystem but the local backup drive is still good, use
+  `borg mount` to browse and copy files out.
+* **Remote borg repository** (including BorgBase) - same idea as local,
+  just a remote repo path.
+* **zfssend target** - it's a normal ZFS dataset; browse it directly, or
+  `zfs send`/`zfs receive` it back.
 
-+ Use the local borg repository. If there is data loss on the ZFS filesystem,
-but the backup drive is still good, use "borg mount" to mount up the directory
-and restore files. See example below.
-
-+ Use the remote borg repository. As with a local repository, use "borg mount"
-to restore files from rsync.net.
-
-The borgwrapper script in this repository can be used to set BORG_PASSPHRASE
-from the borgsnap configuration file, making this slightly easier.
-
-### Restoration Examples
-
-Note: Instead of setting BORG_PASSPHRASE as done here, with an exported
-environment variable, you can paste it in interactively.
-
-Also note that borgsnap does backups directly from the ZFS snapshot, using
-the magic .zfs mount point, hence the borg snapshot preserves this directory
-structure. Don't worry, borg is still deduplicating files, even though the
-directory changes each time. Also, don't panic if you do "ls /mnt" and don't
-see anything - try "ls -a /mnt" or you might miss seeing that .zfs directory.
+`borgwrapper` (in this repository) sets `BORG_PASSPHRASE` from a
+borgsnap_ng config file's `PASS`, so you don't need to do that by hand
+for ad-hoc borg commands:
 
 ```
-$ sudo -i
+$ sudo -u borg borgwrapper /path/to/myconfig.conf list /path/to/local/repo
+monthly-20260701                     Wed, 2026-07-01 03:00:12
+weekly-20260706                      Mon, 2026-07-06 03:00:08
+daily-20260730                       Thu, 2026-07-30 03:00:05
 
-# export BORG_PASSPHRASE=$(</path/to/my/super/secret/myhost.key)
+$ sudo -u borg borgwrapper /path/to/myconfig.conf mount /path/to/local/repo::daily-20260730 /mnt
 
-# borg list /backup/borg/zroot/root
-week-20171008                        Sun, 2017-10-08 01:07:29
-day-20171009                         Mon, 2017-10-09 01:07:54
-day-20171010                         Tue, 2017-10-10 01:07:48
-day-20171011                         Wed, 2017-10-11 01:07:57
+$ ls /mnt/.zfs/snapshot/daily-20260730/
+(the dataset's contents as of that snapshot)
 
-# borg mount /backup/borg/zroot/root::day-20171011 /mnt
-
-# ls /mnt/.zfs/snapshot/day-20171011/
-backup	bin   etc  home	 lib64  proc  root  sbin  tmp  var
-
-# borg umount /mnt
+$ sudo -u borg borgwrapper /path/to/myconfig.conf umount /mnt
 ```
 
-Restoring from rsync.net is nearly the same, just a change in the path, and
-passing --remote-path=borg1 since we are using a modern borg version:
+Note that borgsnap_ng backs up directly from the ZFS snapshot via its
+`.zfs` mount point, so the archive preserves that directory structure -
+borg still deduplicates normally even though the leading path changes
+with each snapshot name.
+
+Without `borgwrapper`, the same thing works with a plain `borg` command
+and `BORG_PASSPHRASE` exported by hand:
 
 ```
-# borg mount --remote-path=borg1 XXXX@YYYY.rsync.net:myhost/zroot/root::day-20171011 /mnt
+$ export BORG_PASSPHRASE=$(cat /path/to/myconfig.key)
+$ borg list /path/to/local/repo
 ```
 
-I used "borg mount" above, where we would, simply "cp" the files out. See
-the borg manpages to read about other restoration options, such as
-"borg extract".
-
-And finally, using the borgwrapper script, which will set BORG_PASSPHRASE for
-you:
-```
-# borgwrapper /path/to/my/borgsnap.conf list /backup/borg/zroot/root
-[...]
-```
+For a remote repo, add `--remote-path=borg` (or whatever `REPOLIST`
+configured for that entry) and use the `ssh://...` path instead. See the
+borg manpages for other restoration approaches, such as `borg extract`.
 
 ## Known limitations
 
-See [BACKLOG.md](BACKLOG.md) for understood, deliberately deferred
-edge cases and possible future improvements.
-
+See [BACKLOG.md](BACKLOG.md) for understood, deliberately deferred edge
+cases and possible future improvements.
