@@ -63,9 +63,19 @@
 # REPOSKIP - "LOCAL", "REMOTE", or "NONE" - skip that whole category of
 #   repo for this run.
 #
-# RETENTIONPERIOD - "monthly,N;weekly,N;daily,N" (or other interval
-#   names) - how many of each to keep, both for ZFS snapshots (source
-#   side) and for borg archives (via "borg prune").
+# RETENTIONPERIOD - "monthly,N;weekly,N;daily,N" - how many of each to
+#   keep, both for ZFS snapshots (source side) and for borg archives (via
+#   "borg prune"). The interval names must be exactly "monthly",
+#   "weekly", and "daily" - nothing else is recognized. See SNAPSHOT_TAG
+#   below if you need to avoid a naming collision with another tool.
+#
+# SNAPSHOT_TAG - optional, empty by default. Inserts a fixed prefix into
+#   every ZFS snapshot label ("TAG-monthly-20260730" instead of plain
+#   "monthly-20260730") - lets borgsnap_ng coexist on the same dataset as
+#   another backup tool (including the original borgsnap, which shares
+#   this same interval-date label convention) without a snapshot-name
+#   collision. Letters, digits, and underscore only. Doesn't affect borg
+#   archive names or repo paths - only the ZFS side.
 #
 # BORG_VERIFY - optional, runs "borg check" after pruning at a
 #   configurable depth (repo/archive/data) per interval, to catch a

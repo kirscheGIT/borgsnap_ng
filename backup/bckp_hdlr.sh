@@ -118,6 +118,16 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
             for strtBckpMchn_interval in $strtBckpMchn_intervallist; do
                 strtBckpMchn_label=$(echo "$strtBckpMchn_interval" | cut -d',' -f1 | sed 's/^[ \t]*//;s/[ \t]*$//')  # Trim leading and trailing whitespace
                 strtBckpMchn_keepduration=$(echo "$strtBckpMchn_interval" | cut -d',' -f2 | sed 's/^[ \t]*//;s/[ \t]*$//')
+                # Optional SNAPSHOT_TAG support: inserted as a prefix on
+                # the FINAL label only ("TAG-monthly-20260730" instead of
+                # "monthly-20260730") - the interval-name checks below
+                # (chkDateStr-relevant, via getZFSSnapshot's LATEST
+                # lookup) deliberately keep using the bare interval name
+                # unchanged. getZFSSnapshot itself applies this same tag
+                # internally when building its LATEST/ALL search pattern,
+                # so the "does last month's snapshot already exist" check
+                # below correctly finds tagged snapshots too.
+                strtBckpMchn_tagprefix="${SNAPSHOT_TAG:+${SNAPSHOT_TAG}-}"
                 
                 if [ "$strtBckpMchn_label" = "monthly" ] || [ "$strtBckpMchn_label" = "weekly" ]; then
                     strtBckpMchn_lastsnap=$(getZFSSnapshot "$strtBckpMchn_dataset" "$strtBckpMchn_label" "LATEST")
@@ -133,18 +143,19 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                         err_hdlr "$strtBckpMchn_rc"
                     fi
                     if { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq 1 ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
-                        strtBckpMchn_label="$strtBckpMchn_label""-""$strtBckpMchn_date"
+                        strtBckpMchn_label="${strtBckpMchn_tagprefix}${strtBckpMchn_label}-${strtBckpMchn_date}"
                         break
                     elif { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofweek" -eq 0 ]; } && [ "$strtBckpMchn_label" = "weekly" ]; then
-                        strtBckpMchn_label="$strtBckpMchn_label""-""$strtBckpMchn_date"
+                        strtBckpMchn_label="${strtBckpMchn_tagprefix}${strtBckpMchn_label}-${strtBckpMchn_date}"
                         break
                     else
                         continue
                     fi
                 else
-                    strtBckpMchn_label="$strtBckpMchn_label-$strtBckpMchn_date"
+                    strtBckpMchn_label="${strtBckpMchn_tagprefix}${strtBckpMchn_label}-${strtBckpMchn_date}"
                     break
                 fi
+
 
             done
             # [ ] TODO #4 Pre and post scripts for the snapshots
@@ -414,6 +425,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
         unset strtBckpMchn_verifydepth
         unset strtBckpMchn_lastsnap       
         unset strtBckpMchn_keepduration
+        unset strtBckpMchn_tagprefix
         unset strtBckpMchn_recursive
         unset strtBckpMchn_date
         unset strtBckpMchn_dayofweek

@@ -75,3 +75,28 @@ finalized)? What should happen if a hook itself fails - abort the whole
 run, skip just that dataset, or just warn and continue? Revisit once
 there's a concrete use case (e.g. flushing an application before the
 snapshot) driving the actual requirements.
+
+## A single-interval RETENTIONPERIOD can produce a malformed label
+
+**What happens:** if RETENTIONPERIOD configures only ONE interval (e.g.
+`RETENTIONPERIOD="monthly,1"` alone, with no "daily" or other always-
+qualifying fallback), and that interval doesn't qualify for a fresh
+snapshot today (not the 1st of the month, an existing snapshot for this
+month is already found), the interval-selection loop's `continue`
+statement has nothing left to try - it exits the loop with the snapshot
+label still at its initial, bare value ("monthly", with no date
+appended), rather than reusing the existing snapshot's actual name or
+producing some other well-defined result.
+
+**Why this normally doesn't matter:** every realistic RETENTIONPERIOD
+includes "daily" (or some other interval whose bare name isn't
+"monthly"/"weekly", so it always takes the generic, always-qualifying
+branch) as the last-resort entry, so the loop always terminates with a
+freshly, correctly labeled snapshot in practice. This was only found
+while testing the SNAPSHOT_TAG feature with a deliberately minimal,
+single-interval test config - not from any real-world report.
+
+**Why deferred:** genuinely low real-world likelihood, and the right
+fix (well-defined behavior for "no interval qualified this run" - skip
+the dataset entirely with a clear message? fall back to some default
+interval?) needs its own design discussion, not a quick patch.

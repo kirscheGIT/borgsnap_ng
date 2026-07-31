@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.33
+# TESTKIT_VERSION=2026-07-20.35
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -1886,6 +1886,152 @@ assert "FIX65: the OTHER repo's prune still ran (not aborted)" \
   "grep -q \"borg prune.*$WORKDIR24/repo_ok\" '$MOCK_LOG'"
 assert "FIX65: source-side ZFS retention (pruneZFSSnapshot) still ran afterward, not skipped" \
   "grep -q 'No old backups to purge\\|Purging old snapshot' '$WORKDIR24/run_prunefail.log'"
+
+echo "-------------------------------------"
+echo "SNAPSHOT_TAG (optional collision-avoidance tag)"
+echo "-------------------------------------"
+
+WORKDIR26="$(mktemp -d)"
+mkdir -p "$WORKDIR26/repo1"
+MAILKEYFILE26="$WORKDIR26/test26.key"; echo "testpassphrase" > "$MAILKEYFILE26"; chmod 600 "$MAILKEYFILE26"
+
+# Scenario A: SNAPSHOT_TAG applied to a fresh snapshot's label.
+cat > "$WORKDIR26/test26-tagged.conf" << EOF41
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE26"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR26/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+SNAPSHOT_TAG="usb"
+MSG_LEVEL=2
+EOF41
+chmod 600 "$WORKDIR26/test26-tagged.conf"
+export MOCK_LOG="$WORKDIR26/mock.log"
+export MOCK_STATE="$WORKDIR26/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR26/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR26/test26-tagged.conf" > "$WORKDIR26/run_tagged.log" 2>&1
+RC_TAGGED=$?
+assert "SNAPSHOT_TAG: run succeeds" "[ $RC_TAGGED -eq 0 ]"
+assert "SNAPSHOT_TAG: the snapshot label is tag-prefixed (usb-daily-...)" \
+  "grep -q 'usb-daily-2026' '$MOCK_LOG'"
+
+# Scenario A2: pruneZFSSnapshot's own counting/matching must be
+# tag-aware too - it derives the bare interval name from the full label
+# by stripping both the date suffix AND the tag prefix before querying
+# getZFSSnapshot's ALL branch. Seeds several existing tagged snapshots
+# plus one UNTAGGED one (simulating the original, untagged tool sharing
+# this same dataset) to verify: no chkDateStr rejection, correct
+# over-the-keep-count pruning of the TAGGED ones specifically, and the
+# untagged snapshot is left completely untouched (never counted,
+# never destroyed) - proving real isolation between the two tools'
+# snapshots, not just "no error".
+WORKDIR26B="$(mktemp -d)"
+mkdir -p "$WORKDIR26B/repo1"
+MAILKEYFILE26B="$WORKDIR26B/test26b.key"; echo "testpassphrase" > "$MAILKEYFILE26B"; chmod 600 "$MAILKEYFILE26B"
+cat > "$WORKDIR26B/test26b-pruning.conf" << EOF44
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE26B"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR26B/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,2"
+PRE_SCRIPT=
+POST_SCRIPT=
+SNAPSHOT_TAG="usb"
+MSG_LEVEL=2
+EOF44
+chmod 600 "$WORKDIR26B/test26b-pruning.conf"
+export MOCK_LOG="$WORKDIR26B/mock.log"
+export MOCK_STATE="$WORKDIR26B/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR26B/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "tank/data@usb-daily-20260710" >> "$MOCK_STATE"
+echo "tank/data@usb-daily-20260711" >> "$MOCK_STATE"
+echo "tank/data@usb-daily-20260712" >> "$MOCK_STATE"
+echo "tank/data@daily-20260713" >> "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR26B/test26b-pruning.conf" > "$WORKDIR26B/run_pruning.log" 2>&1
+RC_TAGPRUNE=$?
+assert "SNAPSHOT_TAG pruning: run succeeds" "[ $RC_TAGPRUNE -eq 0 ]"
+assert "SNAPSHOT_TAG pruning: no chkDateStr rejection during pruning" \
+  "! grep -q 'does not contain a date or valid backup interval name' '$WORKDIR26B/run_pruning.log'"
+assert "SNAPSHOT_TAG pruning: the two oldest TAGGED snapshots get pruned" \
+  "grep -q 'usb-daily-20260710' '$WORKDIR26B/run_pruning.log' && grep -q 'usb-daily-20260711' '$WORKDIR26B/run_pruning.log'"
+assert "SNAPSHOT_TAG pruning: the newest tagged snapshot is kept, not pruned" \
+  "! grep -q 'Purging old snapshot tank/data@usb-daily-20260712' '$WORKDIR26B/run_pruning.log'"
+assert "SNAPSHOT_TAG pruning: the UNTAGGED snapshot (other tool) is never touched" \
+  "! grep -q 'daily-20260713' '$WORKDIR26B/run_pruning.log'"
+
+# Scenario B: an existing TAGGED monthly snapshot must be correctly
+# recognized by the LATEST check - on a non-1st-of-month day (the mock
+# date is pinned to the 15th), this must mean "don't take a fresh
+# monthly snapshot", exactly like the untagged case already does. This
+# is the critical correctness check: if getZFSSnapshot's LATEST search
+# weren't tag-aware, it would never find this existing tagged snapshot,
+# wrongly concluding "no previous monthly snapshot" and taking a fresh
+# one on every single run regardless of the date.
+: > "$MOCK_LOG"
+echo "tank/data@usb-monthly-20260701" >> "$MOCK_STATE"
+cat > "$WORKDIR26/test26-monthly.conf" << EOF42
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE26"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR26/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1;daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+SNAPSHOT_TAG="usb"
+MSG_LEVEL=2
+EOF42
+chmod 600 "$WORKDIR26/test26-monthly.conf"
+sh ./borgsnap_ng.sh run "$WORKDIR26/test26-monthly.conf" > "$WORKDIR26/run_monthly.log" 2>&1
+RC_MONTHLY=$?
+assert "SNAPSHOT_TAG: monthly+daily run with an existing tagged monthly snapshot still succeeds" "[ $RC_MONTHLY -eq 0 ]"
+assert "SNAPSHOT_TAG: the existing tagged monthly snapshot was found - falls through to daily, not a fresh monthly" \
+  "grep -q 'usb-daily-2026' '$MOCK_LOG'"
+assert "SNAPSHOT_TAG: no fresh (untagged or freshly dated) monthly snapshot was taken" \
+  "! grep -q 'zfs snapshot tank/data@monthly' '$MOCK_LOG'"
+
+# Scenario C: an invalid SNAPSHOT_TAG is rejected at config load time.
+cat > "$WORKDIR26/test26-invalid.conf" << EOF43
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE26"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR26/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+SNAPSHOT_TAG="usb-1"
+EOF43
+chmod 600 "$WORKDIR26/test26-invalid.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR26/test26-invalid.conf" > "$WORKDIR26/run_invalid.log" 2>&1
+RC_INVALIDTAG=$?
+assert "SNAPSHOT_TAG: a value with a hyphen is rejected, not silently accepted" "[ $RC_INVALIDTAG -ne 0 ]"
+assert "SNAPSHOT_TAG: the rejection message names the actual problem" \
+  "grep -q \"invalid value 'usb-1'\" '$WORKDIR26/run_invalid.log'"
+
 
 echo "-------------------------------------"
 echo "Result: $PASS_CNT passed, $FAIL_CNT failed"

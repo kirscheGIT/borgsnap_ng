@@ -439,6 +439,26 @@ fi
 section "Step 11/13: retention"
 RETENTIONPERIOD=$(ask "RETENTIONPERIOD (interval,keep pairs)" "monthly,1;weekly,4;daily,7")
 
+SNAPSHOT_TAG=""
+echo ""
+echo "If this dataset is ALSO backed up by another tool that uses the"
+echo "same monthly-/weekly-/daily-DATE ZFS snapshot naming (including the"
+echo "original, pre-fork borgsnap) - e.g. testing borgsnap_ng in parallel"
+echo "before migrating a pool over - both tools would try to create the"
+echo "exact same snapshot name and collide. A tag prefixes every snapshot"
+echo "label this dataset gets ('TAG-monthly-20260730' instead of plain"
+echo "'monthly-20260730') to keep them apart."
+if ask_yes_no "Tag this dataset's snapshots to avoid a naming collision with another tool?" "n"; then
+    while :; do
+        SNAPSHOT_TAG=$(ask "Tag (letters, digits, underscore only)" "")
+        case "$SNAPSHOT_TAG" in
+            "") echo "Can't be empty if you're enabling this." ;;
+            *[!a-zA-Z0-9_]*) echo "Only letters, digits, and underscore are allowed - try again." ;;
+            *) break ;;
+        esac
+    done
+fi
+
 # ===========================================================================
 # Step 12: verification
 # ===========================================================================
@@ -574,6 +594,7 @@ LOCAL_READABLE_BY_OTHERS=$LOCAL_READABLE
 REPOLIST="$REPOLIST_ENTRIES"
 REPOSKIP="NONE"
 RETENTIONPERIOD="$RETENTIONPERIOD"
+SNAPSHOT_TAG="$SNAPSHOT_TAG"
 BORG_VERIFY="$BORG_VERIFY"
 RESTORE_VERIFY="$RESTORE_VERIFY"
 PRE_SCRIPT=

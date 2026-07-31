@@ -85,15 +85,28 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             err_hdlr "$getZFSSnap_rc"
         fi
 
+        # Optional SNAPSHOT_TAG support: when set, snapshots for this
+        # interval are named "TAG-interval-date" instead of plain
+        # "interval-date" - lets borgsnap_ng coexist on the same dataset
+        # as another backup tool without a snapshot-name collision (see
+        # BACKLOG.md / bckp_hdlr.sh for the full rationale). Only the
+        # LATEST/ALL branches below need this - they build their own
+        # search pattern from the bare interval name ("monthly"), so they
+        # need to know the tag to find the RIGHT snapshots. The exact-
+        # match branch just matches whatever full string it's given
+        # (which already includes the tag if the caller applied one), so
+        # it needs no changes here.
+        getZFSSnap_tagprefix="${SNAPSHOT_TAG:+${SNAPSHOT_TAG}-}"
+
         if { [ -z "$getZFSSnap_listParameter" ] || [ "$#" -eq 2 ]; } && [ "$getZFSSnap_StrContainsDate" = 0 ]; then # Get a single snapshot by name
             msg "DEBUG" "We are in the First branch."
             printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_date}"
         elif [ "$getZFSSnap_listParameter" = "LATEST" ]; then # Get the latest snapshot of a given backup intervall
             msg "DEBUG" "We are in the LATEST branch."
-            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r | head -1 # Get a list of the snapshots of a given backup intervall
+            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_tagprefix}${getZFSSnap_date}-" | sort -r | head -1 # Get a list of the snapshots of a given backup intervall
         elif [ "$getZFSSnap_listParameter" = "ALL" ]; then
             msg "DEBUG" "We are in the All branch"
-            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_date}-" | sort -r
+            printf '%s\n' "$getZFSSnap_zfslist" | grep "${getZFSSnap_dataset}@${getZFSSnap_tagprefix}${getZFSSnap_date}-" | sort -r
         else
             if [ -n "$getZFSSnap_listParameter" ]; then
                 msg "ERROR" "Wrong keyword for function: $getZFSSnap_listParameter "
@@ -104,6 +117,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
             unset getZFSSnap_StrContainsDate
             unset getZFSSnap_zfslist
             unset getZFSSnap_rc
+            unset getZFSSnap_tagprefix
             IFS="$getZFSSnap_OLD_IFS"
             unset getZFSSnap_OLD_IFS
             return 1
@@ -117,6 +131,7 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         unset getZFSSnap_StrContainsDate
         unset getZFSSnap_zfslist
         unset getZFSSnap_rc
+        unset getZFSSnap_tagprefix
         IFS="$getZFSSnap_OLD_IFS"
         unset getZFSSnap_OLD_IFS
         return 0
@@ -212,6 +227,14 @@ if [ -z "${ZFS_HDLR_SOURCED+x}" ]; then
         
 
         pruneZFS_label="${pruneZFS_label%-*}"
+        # Optional SNAPSHOT_TAG support: strip a leading "TAG-" too, so
+        # what's left is the bare interval name ("monthly"), not
+        # "TAG-monthly" - getZFSSnapshot's own ALL branch re-applies the
+        # same tag internally when building its search pattern, and
+        # passing it "TAG-monthly" instead of "monthly" here would fail
+        # its chkDateStr validation (it only recognizes the bare interval
+        # names, by design).
+        pruneZFS_label="${pruneZFS_label#"${SNAPSHOT_TAG:+${SNAPSHOT_TAG}-}"}"
         pruneZFS_TotalNumberOfSnapshots=$(getZFSSnapshot "$pruneZFS_dataset" "$pruneZFS_label" "ALL" | wc -l)
 
         msg "DEBUG" "------ $(date) ------"

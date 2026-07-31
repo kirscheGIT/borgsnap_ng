@@ -99,6 +99,27 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         export MSG_LEVEL
         msg "DEBUG" "MSG_LEVEL is $MSG_LEVEL"
 
+        # SNAPSHOT_TAG: optional, empty by default. Inserted as
+        # "TAG-interval-date" instead of the plain "interval-date" ZFS
+        # snapshot label - lets borgsnap_ng coexist on the same dataset
+        # as another backup tool (including the original borgsnap, which
+        # shares this same interval-date label convention) without a
+        # snapshot-name collision. Restricted to letters/digits/
+        # underscore - it becomes part of a ZFS snapshot name and is
+        # matched via exact-prefix string operations elsewhere, so
+        # anything that could be ambiguous with the "-" separator between
+        # tag/interval/date, or that ZFS itself would reject, is rejected
+        # here up front instead of failing confusingly later.
+        if [ -n "${SNAPSHOT_TAG:-}" ]; then
+            case "$SNAPSHOT_TAG" in
+                *[!a-zA-Z0-9_]*)
+                    die "SNAPSHOT_TAG: invalid value '$SNAPSHOT_TAG' - only letters, digits, and underscore are allowed"
+                    ;;
+            esac
+        fi
+        export SNAPSHOT_TAG
+        msg "DEBUG" "SNAPSHOT_TAG is ${SNAPSHOT_TAG:-<not set>}"
+
         # [ ] TODO: #20 Modifiy to check if borg user is used
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
