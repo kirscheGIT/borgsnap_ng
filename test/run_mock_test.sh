@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.36
+# TESTKIT_VERSION=2026-07-20.37
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -2076,6 +2076,50 @@ assert "FIX67: the per-interval BORG_VERIFY entry ('daily:archive') actually app
   "grep -q 'borg check (depth: archive)' '$WORKDIR26C/run_verify.log'"
 assert "FIX67: the per-interval RESTORE_VERIFY entry ('daily:on') actually applied, not the off default" \
   "grep -q 'restore verification passed' '$WORKDIR26C/run_verify.log'"
+
+echo "-------------------------------------"
+echo "COMPRESS/CACHEMODE actually applied (real-world bug, FIX #68)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: borgsnap_ng.sh's own call to
+# startBackupMachine hardcoded empty strings for the borg repo-options
+# argument, regardless of what COMPRESS/CACHEMODE were configured to -
+# silently triggering bckp_hdlr.sh's internal fallback
+# ("auto,zstd,9"/"ctime,size,inode") on every single run instead. Uses
+# values distinctly different from both the old hardcoded fallback and
+# cfg_file_hdlr.sh's own "if unset" default, so a pass here can't be a
+# coincidental match.
+WORKDIR27="$(mktemp -d)"
+mkdir -p "$WORKDIR27/repo1"
+MAILKEYFILE27="$WORKDIR27/test27.key"; echo "testpassphrase" > "$MAILKEYFILE27"; chmod 600 "$MAILKEYFILE27"
+cat > "$WORKDIR27/test27-compress.conf" << EOF46
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="lz4"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE27"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR27/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF46
+chmod 600 "$WORKDIR27/test27-compress.conf"
+export MOCK_LOG="$WORKDIR27/mock.log"
+export MOCK_STATE="$WORKDIR27/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR27/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR27/test27-compress.conf" > "$WORKDIR27/run_compress.log" 2>&1
+RC_COMPRESS=$?
+assert "FIX68: run succeeds" "[ $RC_COMPRESS -eq 0 ]"
+assert "FIX68: COMPRESS from the config ('lz4') is actually used, not the old 'auto,zstd,9' fallback" \
+  "grep -q -- '--compression=lz4' '$MOCK_LOG'"
+assert "FIX68: CACHEMODE from the config ('mtime,size') is actually used, not the old 'ctime,size,inode' fallback" \
+  "grep -q -- '--files-cache=mtime,size' '$MOCK_LOG'"
+assert "FIX68: the stale hardcoded compression value no longer appears anywhere" \
+  "! grep -q 'auto,zstd,9' '$MOCK_LOG'"
 
 
 echo "-------------------------------------"

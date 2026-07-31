@@ -243,7 +243,12 @@ case "$1" in
     shift  # Remove the first argument
     acquire_lock
     readconfigfile "$@"
-    startBackupMachine "$FS" "$REPOLIST" "$RETENTIONPERIOD" "" "" "";;
+    # FIX #68: this used to hardcode "" here regardless of COMPRESS/
+    # CACHEMODE, silently triggering bckp_hdlr.sh's own internal fallback
+    # ("auto,zstd,9"/"ctime,size,inode") on every single run - COMPRESS/
+    # CACHEMODE were validated and logged by cfg_file_hdlr.sh, but never
+    # actually threaded through to the real borg command.
+    startBackupMachine "$FS" "$REPOLIST" "$RETENTIONPERIOD" "--info --stats --compression=${COMPRESS} --files-cache=${CACHEMODE} --show-rc" "" "";;
     #runBackup "$@";;
   snap)
     shift  # Remove the first argument
