@@ -358,13 +358,12 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
             # fail too, so don't bother trying, and be specific about
             # what's actually wrong instead of falling through to the
             # generic "not yet a valid repository, trying init" message.
-            unset ensureBorgInit_CALLINGFUCNTION
-            unset ensureBorgInit_remotecmd
-            unset ensureBorgInit_encryption
-            unset ensureBorgInit_remotepath
-            unset ensureBorgInit_listcmd
-            unset ensureBorgInit_listrc
-            die "repo '$ensureBorgInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52). This repo already has its own encryption passphrase from when it was first initialized - if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one."
+            # FIX #71: this used to call die() here, which aborts the
+            # ENTIRE run - see the same fix in ensureBorgBaseInit for the
+            # full reasoning. Log clearly and let the caller skip just
+            # this one repo instead.
+            msg "ERROR" "repo '$ensureBorgInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52) - this repo already has its own encryption passphrase from when it was first initialized; if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one. Skipping this repo, continuing with remaining repos."
+            ensureBorgInit_failed=1 # noqa:unset - see the initial assignment above
         else
             # Deliberately not trying to distinguish every possible exit
             # code here (unlike ensureBorgBaseInit, which can afford to
@@ -451,39 +450,39 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         ensureBorgBaseInit_listrc=$?
         msg "DEBUG" "borgbase repo state check exit code: $ensureBorgBaseInit_listrc"
 
+        ensureBorgBaseInit_failed=0 # noqa:unset - this IS the return value, see exec_cmd's lexit_status for the same pattern
+
         case "$ensureBorgBaseInit_listrc" in
             0)
                 msg "DEBUG" "borgbase repo '$ensureBorgBaseInit_repo' already initialized"
                 ;;
             15)
                 msg "INFO" "borgbase repo '$ensureBorgBaseInit_repo' exists but is not yet initialized - running borg init"
-                initBorg "$ensureBorgBaseInit_repo" "$ensureBorgBaseInit_remotecmd" "$ensureBorgBaseInit_encryption"
+                if ! initBorg "$ensureBorgBaseInit_repo" "$ensureBorgBaseInit_remotecmd" "$ensureBorgBaseInit_encryption"; then
+                    ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
+                fi
                 ;;
             13)
-                unset ensureBorgBaseInit_CALLINGFUCNTION
-                unset ensureBorgBaseInit_remotecmd
-                unset ensureBorgBaseInit_encryption
-                unset ensureBorgBaseInit_remotepath
-                unset ensureBorgBaseInit_listcmd
-                unset ensureBorgBaseInit_listrc
-                die "borgbase repo '$ensureBorgBaseInit_repo' does not exist. BorgBase repos must be created via their web UI first - filesystem operations (mkdir etc.) aren't possible over their restricted SSH access, so this can't be created automatically. Check the path and that the repo exists in your BorgBase dashboard."
+                # FIX #71: this used to call die() here, which aborts the
+                # ENTIRE run (die() exits the whole process) - meaning
+                # this one repo's configuration problem prevented every
+                # OTHER configured repo from being backed up too, unlike
+                # every other repo-level failure in this project (FIX
+                # #36/#57/#59/#65/#69), which logs clearly and lets the
+                # dispatch loop continue to the next repo. Report it just
+                # as loudly, but don't take everything else down with it.
+                msg "ERROR" "borgbase repo '$ensureBorgBaseInit_repo' does not exist - BorgBase repos must be created via their web UI first (filesystem operations aren't possible over their restricted SSH access, so this can't be created automatically); check the path and that the repo exists in your BorgBase dashboard. Skipping this repo, continuing with remaining repos."
+                ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
                 ;;
             52)
-                unset ensureBorgBaseInit_CALLINGFUCNTION
-                unset ensureBorgBaseInit_remotecmd
-                unset ensureBorgBaseInit_encryption
-                unset ensureBorgBaseInit_remotepath
-                unset ensureBorgBaseInit_listcmd
-                unset ensureBorgBaseInit_listrc
-                die "borgbase repo '$ensureBorgBaseInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52). This repo already has its own encryption passphrase from when it was first initialized - if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one."
+                # FIX #71: same reasoning as rc 13 above.
+                msg "ERROR" "borgbase repo '$ensureBorgBaseInit_repo' rejected the configured passphrase (borg's own PassphraseWrong, rc 52) - this repo already has its own encryption passphrase from when it was first initialized; if you're reusing an existing repo (e.g. re-testing, or migrating this config to a new machine), PASS must point to that SAME original passphrase, not a newly generated one. Skipping this repo, continuing with remaining repos."
+                ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
                 ;;
             *)
-                unset ensureBorgBaseInit_CALLINGFUCNTION
-                unset ensureBorgBaseInit_remotecmd
-                unset ensureBorgBaseInit_encryption
-                unset ensureBorgBaseInit_remotepath
-                unset ensureBorgBaseInit_listcmd
-                die "borgbase repo check failed unexpectedly (borg list exit $ensureBorgBaseInit_listrc) for '$ensureBorgBaseInit_repo' - see the borg output above for details. If this is rc 2, double check your client's borg version supports modern remote exit codes (>= 1.4.1, see FIX #50's comments)."
+                # FIX #71: same reasoning as rc 13 above.
+                msg "ERROR" "borgbase repo check failed unexpectedly (borg list exit $ensureBorgBaseInit_listrc) for '$ensureBorgBaseInit_repo' - see the borg output above for details. If this is rc 2, double check your client's borg version supports modern remote exit codes (>= 1.4.1, see FIX #50's comments). Skipping this repo, continuing with remaining repos."
+                ensureBorgBaseInit_failed=1 # noqa:unset - see the initial assignment above
                 ;;
         esac
 
@@ -495,7 +494,7 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
         unset ensureBorgBaseInit_remotepath
         unset ensureBorgBaseInit_listcmd
         unset ensureBorgBaseInit_listrc
-        return 0
+        return "$ensureBorgBaseInit_failed"
     }
 
     checkBorg(){
@@ -755,30 +754,41 @@ if [ -z "${BORG_HDLR_SOURCED+x}" ]; then
 
         if [ "$backendBorg_repotype" = "borgbase" ]; then
             ensureBorgBaseInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+            backendBorg_initfailed=$?
         else
-            if ! ensureBorgInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"; then
-                # FIX #57: initBorg (called inside ensureBorgInit) already
-                # logged the failure loudly and returned nonzero - this
-                # repo isn't usable this run (createBorg/pruneBorg/
-                # checkBorg would just cascade into more failures against
-                # a never-initialized repo). Skip it, but let the
-                # dispatch loop in bckp_hdlr.sh continue normally to the
-                # next configured repo, matching FIX #36's philosophy.
-                LASTFUNC="$backendBorg_CALLINGFUCNTION"
-                unset backendBorg_CALLINGFUCNTION
-                unset backendBorg_repo
-                unset backendBorg_remotecmd
-                unset backendBorg_label
-                unset backendBorg_createopts
-                unset backendBorg_srcpath
-                unset backendBorg_pruneopts
-                unset backendBorg_intervallabel
-                unset backendBorg_encryption
-                unset backendBorg_repotype
-                unset backendBorg_verifydepth
-                return 0
-            fi
+            ensureBorgInit "$backendBorg_repo" "$backendBorg_remotecmd" "$backendBorg_encryption"
+            backendBorg_initfailed=$?
         fi
+        if [ "$backendBorg_initfailed" -ne 0 ]; then
+            # FIX #57/#71: ensureBorgInit/ensureBorgBaseInit already
+            # logged the failure loudly and returned nonzero - this repo
+            # isn't usable this run (createBorg/pruneBorg/checkBorg would
+            # just cascade into more failures against a never-initialized
+            # or misconfigured repo). Skip it, but let the dispatch loop
+            # in bckp_hdlr.sh continue normally to the next configured
+            # repo, matching FIX #36's philosophy. FIX #71 specifically:
+            # ensureBorgBaseInit used to die() on several of its own
+            # failure cases (repo doesn't exist, wrong passphrase,
+            # unexpected borg list exit code) - die() exits the ENTIRE
+            # process, so one BorgBase repo's configuration problem was
+            # taking down backups to every OTHER configured repo too,
+            # unlike every other repo-level failure in this project.
+            LASTFUNC="$backendBorg_CALLINGFUCNTION"
+            unset backendBorg_CALLINGFUCNTION
+            unset backendBorg_repo
+            unset backendBorg_remotecmd
+            unset backendBorg_label
+            unset backendBorg_createopts
+            unset backendBorg_srcpath
+            unset backendBorg_pruneopts
+            unset backendBorg_intervallabel
+            unset backendBorg_encryption
+            unset backendBorg_repotype
+            unset backendBorg_verifydepth
+            unset backendBorg_initfailed
+            return 0
+        fi
+        unset backendBorg_initfailed
 
         msg "DEBUG" "--------------------------- CREATE BORG -----------------------------------"
         msg "DEBUG" "Repo is: $backendBorg_repo "

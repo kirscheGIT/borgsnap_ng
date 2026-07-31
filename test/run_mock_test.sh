@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.39
+# TESTKIT_VERSION=2026-07-20.40
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -708,7 +708,7 @@ assert "FIX50: borg create still ran" "grep -q '^borg create' '$MOCK_LOG'"
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_BORG_LIST_RC=13 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_wrongpath.log" 2>&1
 RC_WRONGPATH=$?
-assert "FIX50: rc 13 (does not exist) - run fails" "[ $RC_WRONGPATH -ne 0 ]"
+assert "FIX50/FIX71: rc 13 (does not exist) - run still succeeds overall (this repo is skipped, not fatal)" "[ $RC_WRONGPATH -eq 0 ]"
 assert "FIX50: the error explains BorgBase repos need the web UI" \
   "grep -q 'must be created via their web UI first' '$WORKDIR8/run_wrongpath.log'"
 assert "FIX50: borg init was NOT attempted for a genuinely wrong path" "! grep -q '^borg init' '$MOCK_LOG'"
@@ -718,7 +718,7 @@ assert "FIX50: borg init was NOT attempted for a genuinely wrong path" "! grep -
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_BORG_LIST_RC=2 sh ./borgsnap_ng.sh run "$WORKDIR8/test8-borgbase.conf" > "$WORKDIR8/run_unexpected.log" 2>&1
 RC_UNEXPECTED=$?
-assert "FIX50: an unexpected borg list exit code fails the run" "[ $RC_UNEXPECTED -ne 0 ]"
+assert "FIX50/FIX71: an unexpected borg list exit code still lets the run succeed overall (this repo is skipped, not fatal)" "[ $RC_UNEXPECTED -eq 0 ]"
 assert "FIX50: the error surfaces the unexpected exit code" "grep -q 'unexpectedly' '$WORKDIR8/run_unexpected.log'"
 
 # Default encryption: a borgbase entry with NO third REPOLIST field must
@@ -2210,7 +2210,7 @@ export BORGSNAP_LOCKDIR="$WORKDIR29/lock"
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_BORG_LIST_RC=52 sh ./borgsnap_ng.sh run "$WORKDIR29/test29-borgbase.conf" > "$WORKDIR29/run_borgbase.log" 2>&1
 RC_BORGBASE52=$?
-assert "FIX70: BorgBase wrong-passphrase run fails clearly (nonzero exit)" "[ $RC_BORGBASE52 -ne 0 ]"
+assert "FIX70/FIX71: BorgBase wrong-passphrase run still succeeds overall (this repo is skipped, not fatal)" "[ $RC_BORGBASE52 -eq 0 ]"
 assert "FIX70: BorgBase wrong-passphrase message names the actual problem, not 'unexpectedly'" \
   "grep -q 'rejected the configured passphrase' '$WORKDIR29/run_borgbase.log'"
 assert "FIX70: BorgBase wrong-passphrase message does not fall back to the generic wording" \
@@ -2234,11 +2234,52 @@ chmod 600 "$WORKDIR29/test29-generic.conf"
 : > "$MOCK_LOG"; : > "$MOCK_STATE"
 MOCK_BORG_LIST_RC=52 sh ./borgsnap_ng.sh run "$WORKDIR29/test29-generic.conf" > "$WORKDIR29/run_generic.log" 2>&1
 RC_GENERIC52=$?
-assert "FIX70: generic-repo wrong-passphrase run fails clearly (nonzero exit)" "[ $RC_GENERIC52 -ne 0 ]"
+assert "FIX70/FIX71: generic-repo wrong-passphrase run still succeeds overall (this repo is skipped, not fatal)" "[ $RC_GENERIC52 -eq 0 ]"
 assert "FIX70: generic-repo wrong-passphrase message names the actual problem" \
   "grep -q 'rejected the configured passphrase' '$WORKDIR29/run_generic.log'"
 assert "FIX70: generic-repo wrong-passphrase does not attempt a pointless init" \
   "! grep -q '^borg init' '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "A problem BorgBase repo no longer takes down LATER repos too (FIX #71)"
+echo "-------------------------------------"
+
+# Reproduces a real-world report: REPOLIST has a problematic BorgBase
+# repo (wrong passphrase, rc 52) followed by a working local repo -
+# before FIX #71, ensureBorgBaseInit's die() call aborted the ENTIRE
+# process the moment it hit the BorgBase repo's problem, so the local
+# repo listed AFTER it in REPOLIST never even got attempted, regardless
+# of whether IT was configured correctly.
+WORKDIR30="$(mktemp -d)"
+mkdir -p "$WORKDIR30/repo_after"
+MAILKEYFILE30="$WORKDIR30/test30.key"; echo "testpassphrase" > "$MAILKEYFILE30"; chmod 600 "$MAILKEYFILE30"
+cat > "$WORKDIR30/test30-order.conf" << EOF50
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE30"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="borgbase:ssh://borgbase_repo/./repo, borg, repokey-blake2; $WORKDIR30/repo_after, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="daily,7"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF50
+chmod 600 "$WORKDIR30/test30-order.conf"
+export MOCK_LOG="$WORKDIR30/mock.log"
+export MOCK_STATE="$WORKDIR30/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR30/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+MOCK_BORG_LIST_RC=52 MOCK_BORG_LIST_RC_REPO="ssh://borgbase_repo" sh ./borgsnap_ng.sh run "$WORKDIR30/test30-order.conf" > "$WORKDIR30/run_order.log" 2>&1
+RC_ORDER=$?
+assert "FIX71: run succeeds despite the earlier BorgBase repo's problem" "[ $RC_ORDER -eq 0 ]"
+assert "FIX71: the BorgBase problem is still reported clearly" \
+  "grep -q 'rejected the configured passphrase' '$WORKDIR30/run_order.log'"
+assert "FIX71: the LATER local repo still gets backed up despite the earlier repo's problem" \
+  "grep -q \"borg create.*$WORKDIR30/repo_after\" '$MOCK_LOG'"
 
 
 echo "-------------------------------------"
