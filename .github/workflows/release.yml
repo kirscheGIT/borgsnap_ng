@@ -1,0 +1,47 @@
+name: Release
+
+# Runs whenever a tag matching v* (e.g. v1.0.0, v2.3.1) is pushed.
+# Builds a clean source tarball via `git archive` - which automatically
+# excludes everything marked export-ignore in .gitattributes (test/,
+# tools/, dev-only docs, etc.) - and publishes it as a GitHub Release
+# asset, alongside GitHub's own auto-generated (unfiltered) source
+# archive.
+#
+# To cut a release: tag and push, nothing else needed.
+#   git tag v1.2.0
+#   git push origin v1.2.0
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build release tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE="borgsnap_ng-${VERSION}.tar.gz"
+          git archive --format=tar.gz \
+            --prefix="borgsnap_ng-${VERSION}/" \
+            -o "$ARCHIVE" "$GITHUB_SHA"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${ARCHIVE}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+

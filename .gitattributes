@@ -1,0 +1,15 @@
+# Files/directories listed here are excluded from `git archive` output
+# (tarballs/zipballs), including GitHub's own auto-generated release
+# source archives and the release workflow in
+# .github/workflows/release.yml - but stay fully tracked and visible in
+# the repo itself. Add anything here that's needed to develop/test this
+# project but not to actually run it.
+
+test/               export-ignore
+test-parallel.conf  export-ignore
+tools/              export-ignore
+.github/            export-ignore
+.gitattributes      export-ignore
+.gitignore          export-ignore
+.shellcheckrc       export-ignore
+CONVENTIONS.md      export-ignore
