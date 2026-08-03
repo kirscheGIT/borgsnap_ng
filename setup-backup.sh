@@ -459,6 +459,30 @@ if ask_yes_no "Tag this dataset's snapshots to avoid a naming collision with ano
     done
 fi
 
+MONTHLY_DAY=1
+echo ""
+echo "If several of your backup jobs share a destination account (e.g."
+echo "several borgsnap_ng configs all backing up to the same BorgBase or"
+echo "storage box account) and all run BORG_VERIFY at 'data' depth on"
+echo "their monthly, having every single one land on the 1st spikes load"
+echo "on the provider (and this machine) all at once."
+if ask_yes_no "Move this dataset's monthly to a day other than the 1st?" "n"; then
+    while :; do
+        MONTHLY_DAY=$(ask "Day of month (1-28)" "1")
+        case "$MONTHLY_DAY" in
+            ''|*[!0-9]*) echo "Must be a plain number - try again." ;;
+            *)
+                if [ "$MONTHLY_DAY" -ge 1 ] && [ "$MONTHLY_DAY" -le 28 ]; then
+                    break
+                fi
+                echo "Must be between 1 and 28 (every month has at least 28 days -"
+                echo "anything higher would skip that dataset's monthly entirely in"
+                echo "some months, not just shift it) - try again."
+                ;;
+        esac
+    done
+fi
+
 # ===========================================================================
 # Step 12: verification
 # ===========================================================================
@@ -595,6 +619,7 @@ REPOLIST="$REPOLIST_ENTRIES"
 REPOSKIP="NONE"
 RETENTIONPERIOD="$RETENTIONPERIOD"
 SNAPSHOT_TAG="$SNAPSHOT_TAG"
+MONTHLY_DAY=$MONTHLY_DAY
 BORG_VERIFY="$BORG_VERIFY"
 RESTORE_VERIFY="$RESTORE_VERIFY"
 PRE_SCRIPT=

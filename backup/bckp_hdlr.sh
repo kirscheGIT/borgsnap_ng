@@ -142,7 +142,7 @@ if [ -z "${BCKP_HDLR_SOURCED+x}" ]; then
                     if [ "$strtBckpMchn_rc" -ne 0 ]; then
                         err_hdlr "$strtBckpMchn_rc"
                     fi
-                    if { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq 1 ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
+                    if { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofmonth" -eq "$MONTHLY_DAY" ]; } && [ "$strtBckpMchn_label" = "monthly" ]; then
                         strtBckpMchn_label="${strtBckpMchn_tagprefix}${strtBckpMchn_label}-${strtBckpMchn_date}"
                         break
                     elif { [ -z "$strtBckpMchn_lastsnap" ] ||  [ "$strtBckpMchn_dayofweek" -eq 0 ]; } && [ "$strtBckpMchn_label" = "weekly" ]; then

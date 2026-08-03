@@ -77,6 +77,15 @@
 #   collision. Letters, digits, and underscore only. Doesn't affect borg
 #   archive names or repo paths - only the ZFS side.
 #
+# MONTHLY_DAY - optional, defaults to 1. Which day-of-month triggers a
+#   fresh "monthly" snapshot/verify for this dataset - lets several
+#   datasets/configs stagger their monthly (and the expensive
+#   BORG_VERIFY "data"-depth check that often rides on it) across
+#   different days instead of all spiking load on the 1st. Must be
+#   1-28 - every month has at least 28 days, so any value outside that
+#   range would silently skip that dataset's entire monthly in some
+#   months rather than just shifting it.
+#
 # BORG_VERIFY - optional, runs "borg check" after pruning at a
 #   configurable depth (repo/archive/data) per interval, to catch a
 #   corrupted/unrestorable repo proactively instead of discovering it

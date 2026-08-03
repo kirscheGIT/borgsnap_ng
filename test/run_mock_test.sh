@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.40
+# TESTKIT_VERSION=2026-07-20.41
 # Mock-based smoke test for borgsnap_ng.
 # Runs the full "run" lifecycle against mocked zfs/borg/mount binaries and
 # asserts the behavior of fixes #1-#5, #7, #9, #11.
@@ -2280,6 +2280,128 @@ assert "FIX71: the BorgBase problem is still reported clearly" \
   "grep -q 'rejected the configured passphrase' '$WORKDIR30/run_order.log'"
 assert "FIX71: the LATER local repo still gets backed up despite the earlier repo's problem" \
   "grep -q \"borg create.*$WORKDIR30/repo_after\" '$MOCK_LOG'"
+
+echo "-------------------------------------"
+echo "MONTHLY_DAY: configurable monthly trigger day"
+echo "-------------------------------------"
+
+WORKDIR31="$(mktemp -d)"
+mkdir -p "$WORKDIR31/repo1"
+MAILKEYFILE31="$WORKDIR31/test31.key"; echo "testpassphrase" > "$MAILKEYFILE31"; chmod 600 "$MAILKEYFILE31"
+
+# Scenario A: MONTHLY_DAY unset - must behave EXACTLY as before (only the
+# 1st triggers a fresh monthly, even though a monthly snapshot already
+# exists for "today" under the mock's normal pinned day-of-month, 15).
+cat > "$WORKDIR31/test31-unset.conf" << EOF51
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE31"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR31/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1"
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF51
+chmod 600 "$WORKDIR31/test31-unset.conf"
+export MOCK_LOG="$WORKDIR31/mock.log"
+export MOCK_STATE="$WORKDIR31/mock.state"
+export BORGSNAP_LOCKDIR="$WORKDIR31/lock"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "tank/data@monthly-20260701" >> "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR31/test31-unset.conf" > "$WORKDIR31/run_unset.log" 2>&1
+RC_MDUNSET=$?
+assert "MONTHLY_DAY unset: run succeeds" "[ $RC_MDUNSET -eq 0 ]"
+assert "MONTHLY_DAY unset: no fresh monthly snapshot on day 15 (unchanged default behavior)" \
+  "! grep -q 'zfs snapshot.*monthly-20260715' '$MOCK_LOG'"
+
+# Scenario B: MONTHLY_DAY=15 - today (the mock's pinned day-of-month, 15)
+# now correctly triggers a fresh monthly, same "already has a snapshot
+# this month" setup as scenario A.
+cat > "$WORKDIR31/test31-match.conf" << EOF52
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE31"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR31/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1"
+MONTHLY_DAY=15
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF52
+chmod 600 "$WORKDIR31/test31-match.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "tank/data@monthly-20260701" >> "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR31/test31-match.conf" > "$WORKDIR31/run_match.log" 2>&1
+RC_MDMATCH=$?
+assert "MONTHLY_DAY=15: run succeeds" "[ $RC_MDMATCH -eq 0 ]"
+assert "MONTHLY_DAY=15: a fresh monthly snapshot IS taken on day 15" \
+  "grep -q 'zfs snapshot.*monthly-20260715' '$MOCK_LOG'"
+
+# Scenario C: MONTHLY_DAY=20 - today (day 15) does NOT match, and a
+# monthly snapshot already exists this "month", so monthly must be
+# skipped entirely (falls through with nothing left to try, since
+# RETENTIONPERIOD here is monthly-only) - proves the custom day is a
+# real gate, not just an additional trigger alongside the 1st.
+cat > "$WORKDIR31/test31-nomatch.conf" << EOF53
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE31"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR31/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1"
+MONTHLY_DAY=20
+PRE_SCRIPT=
+POST_SCRIPT=
+MSG_LEVEL=2
+EOF53
+chmod 600 "$WORKDIR31/test31-nomatch.conf"
+: > "$MOCK_LOG"; : > "$MOCK_STATE"
+echo "tank/data@monthly-20260701" >> "$MOCK_STATE"
+sh ./borgsnap_ng.sh run "$WORKDIR31/test31-nomatch.conf" > "$WORKDIR31/run_nomatch.log" 2>&1
+RC_MDNOMATCH=$?
+assert "MONTHLY_DAY=20: no fresh monthly snapshot taken on day 15" \
+  "! grep -q 'zfs snapshot.*monthly-20260715' '$MOCK_LOG'"
+
+# Scenario D: validation - out of range and non-numeric values are
+# rejected up front with a clear message, not left to fail silently or
+# confusingly later.
+for badvalue in 0 29 31 abc -5; do
+    cat > "$WORKDIR31/test31-bad.conf" << EOF54
+LOCAL_BORG_USER="$(id -un)"
+FS="tank/data,"
+COMPRESS="zstd,9"
+CACHEMODE="mtime,size"
+PASS="$MAILKEYFILE31"
+BASEDIR=""
+LOCAL_READABLE_BY_OTHERS=false
+REPOLIST="$WORKDIR31/repo1, "
+REPOSKIP="NONE"
+RETENTIONPERIOD="monthly,1"
+MONTHLY_DAY=$badvalue
+PRE_SCRIPT=
+POST_SCRIPT=
+EOF54
+    chmod 600 "$WORKDIR31/test31-bad.conf"
+    sh ./borgsnap_ng.sh run "$WORKDIR31/test31-bad.conf" > "$WORKDIR31/run_bad.log" 2>&1
+    RC_MDBAD=$?
+    assert "MONTHLY_DAY='$badvalue': rejected (nonzero exit)" "[ $RC_MDBAD -ne 0 ]"
+done
+assert "MONTHLY_DAY validation: message names the actual problem" \
+  "grep -q 'MONTHLY_DAY' '$WORKDIR31/run_bad.log'"
 
 
 echo "-------------------------------------"

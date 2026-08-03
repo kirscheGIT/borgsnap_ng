@@ -113,7 +113,38 @@ case "$zfsallow_mode" in
         echo "    stream: permission denied' outright. mountpoint=none (set above) means"
         echo "    the actual (would-be-blocked) auto-mount attempt never happens, so this"
         echo "    is safe - we only need the dependency check satisfied, not real mounting."
-        zfs allow -u "$zfsallow_user" create,mount,receive,receive:append,destroy,readonly "$zfsallow_dataset"
+        # FIX #73: receive:append is only recognized on OpenZFS 2.2+. An
+        # unrecognized permission name anywhere in the comma-separated
+        # list makes zfs allow reject the WHOLE call with a misleading
+        # "operation not applicable to datasets of this type" - the same
+        # confusing message ZFS gives for several unrelated problems
+        # (confirmed upstream: openzfs/zfs#11903), not anything specific
+        # to this dataset. Try the modern permission set first; only
+        # fall back to plain receive (still fully functional - just
+        # without receive:append's extra protection against a
+        # destructive `zfs receive -F`, which this project never uses
+        # anyway) if the older set is what this system's ZFS actually
+        # understands.
+        if ! zfs allow -u "$zfsallow_user" create,mount,receive,receive:append,destroy,readonly "$zfsallow_dataset" 2>/tmp/zfsallow_target_err.$$; then
+            if grep -qi "operation not applicable\|invalid" /tmp/zfsallow_target_err.$$ 2>/dev/null; then
+                echo ""
+                echo "    'receive:append' wasn't accepted - this ZFS build predates"
+                echo "    OpenZFS 2.2 (where receive:append was introduced) and doesn't"
+                echo "    recognize it as a valid permission. Falling back to plain"
+                echo "    'receive' (still fully functional for borgsnap_ng - the only"
+                echo "    thing lost is receive:append's extra guard against a"
+                echo "    destructive 'zfs receive -F', which this project never issues"
+                echo "    anyway)."
+                rm -f /tmp/zfsallow_target_err.$$
+                zfs allow -u "$zfsallow_user" create,mount,receive,destroy,readonly "$zfsallow_dataset"
+            else
+                cat /tmp/zfsallow_target_err.$$ >&2
+                rm -f /tmp/zfsallow_target_err.$$
+                exit 1
+            fi
+        else
+            rm -f /tmp/zfsallow_target_err.$$
+        fi
         ;;
     *)
         usage

@@ -120,6 +120,39 @@ if [ -z "${CFG_FILE_HDLR_SOURCED+x}" ]; then
         export SNAPSHOT_TAG
         msg "DEBUG" "SNAPSHOT_TAG is ${SNAPSHOT_TAG:-<not set>}"
 
+        # MONTHLY_DAY: optional, defaults to 1 (the historical, hardcoded
+        # behavior - unset or empty means nothing changes for existing
+        # configs). Which day-of-month triggers a fresh "monthly"
+        # snapshot/verify for THIS dataset. Lets different datasets'
+        # monthly runs (and, critically, their BORG_VERIFY "data"-depth
+        # checks, which are the expensive part) land on different days
+        # instead of every configured dataset hitting the exact same day
+        # - useful for spreading load across a billing period instead of
+        # spiking it all on the 1st.
+        #
+        # Restricted to 1-28: every month has at least 28 days, so any
+        # value in this range is guaranteed to occur every month. A value
+        # of 29-31 would silently skip that dataset's monthly entirely in
+        # any month too short to contain it (e.g. 30 in February) - not a
+        # one-off missed day, a fully skipped month with no monthly
+        # snapshot or verify at all - so rejected up front rather than
+        # left to fail unpredictably, once a year, in a way that would be
+        # easy to miss.
+        if [ -n "${MONTHLY_DAY:-}" ]; then
+            case "$MONTHLY_DAY" in
+                ''|*[!0-9]*)
+                    die "MONTHLY_DAY: invalid value '$MONTHLY_DAY' - must be a number from 1 to 28"
+                    ;;
+            esac
+            if [ "$MONTHLY_DAY" -lt 1 ] || [ "$MONTHLY_DAY" -gt 28 ]; then
+                die "MONTHLY_DAY: invalid value '$MONTHLY_DAY' - must be between 1 and 28 (not every month has a 29th-31st, so a value outside this range would skip that dataset's monthly snapshot/verify entirely in some months)"
+            fi
+        else
+            MONTHLY_DAY=1
+        fi
+        export MONTHLY_DAY
+        msg "DEBUG" "MONTHLY_DAY is $MONTHLY_DAY"
+
         [ "$(id -un)" = "$LOCAL_BORG_USER" ] || die "Configured user is $LOCAL_BORG_USER - Executing user is $(id -un)"
    
         checkFilePerms "$PASS" "PASS (borg passphrase) file"

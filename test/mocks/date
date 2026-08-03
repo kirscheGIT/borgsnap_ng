@@ -1,5 +1,5 @@
 #!/bin/sh
-# TESTKIT_VERSION=2026-07-20.40
+# TESTKIT_VERSION=2026-07-20.41
 # Mock date for borgsnap_ng tests.
 #
 # bckp_hdlr.sh calls `date +"%Y%m%d"`, `date +"%w"`, and `date +"%d"` to pick
@@ -17,10 +17,13 @@
 # neither the 1st of the month nor a Sunday, and it doesn't collide with any
 # of the pre-seeded snapshot dates in run_mock_test.sh (2026-07-01 through
 # 2026-07-09, plus 2026-07-12).
+#
+# MOCK_DATE_DAYOFMONTH=<NN> overrides just the day-of-month (%d) output,
+# for testing MONTHLY_DAY - every other format stays pinned as above.
 case "$1" in
   +%Y%m%d) echo "20260715" ;;
   +%w)     echo "3" ;;
-  +%d)     echo "15" ;;
+  +%d)     echo "${MOCK_DATE_DAYOFMONTH:-15}" ;;
   "+%Y-%m-%d %H:%M:%S") echo "2026-07-15 12:00:00" ;;
   *)
     # Any other format this test doesn't know about yet: fail loudly rather
