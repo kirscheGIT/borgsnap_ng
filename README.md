@@ -160,11 +160,14 @@ That's it, once per configured filesystem.
 
 If a run is interrupted or fails partway through, it's re-entrant: a
 snapshot that already exists for today's label is reused, not treated as
-a fatal error (though see `BACKLOG.md` for one known edge case around
-`zfssend` bookmarks on a same-day retry). The `tidy` command exists as a
-best-effort manual cleanup for test/dev use, unmounting and removing
-today's snapshots/archives so a run can be repeated - it predates the
-re-entrancy above and isn't normally needed anymore.
+a fatal error (though see `BACKLOG.md` for a couple of known edge cases
+around `zfssend` bookmarks - a harmless, self-healing one on a same-day
+retry, and a more consequential one if a source snapshot is ever
+destroyed and recreated by hand while a `zfssend` target already has it).
+The `tidy` command exists as a best-effort manual cleanup for test/dev
+use, unmounting and removing today's snapshots/archives so a run can be
+repeated - it predates the re-entrancy above and isn't normally needed
+anymore.
 
 ## Restoring files
 

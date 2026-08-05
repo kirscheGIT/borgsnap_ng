@@ -51,6 +51,57 @@ times on the same day for the same interval - normal, once-daily
 production operation via the timer never hits it. Revisit if it turns
 out to matter more in practice than expected.
 
+## Manually destroying a source snapshot permanently breaks zfssend for that target
+
+**What happens:** if a source-side ZFS snapshot is destroyed by hand
+(not via borgsnap_ng's own retention) and a new snapshot with the exact
+same name gets created afterward (e.g. by re-running today's backup), a
+`zfssend` target that had already successfully sent the *original*
+snapshot is left with a tracking bookmark that no longer corresponds to
+anything in the target's actual history - ZFS bookmarks track a specific
+snapshot by GUID, not by name, and a same-named replacement snapshot has
+a *different* GUID. Every subsequent incremental send to that target
+then fails:
+
+```
+cannot receive incremental stream: most recent snapshot of TARGET does
+not match incremental source
+```
+
+Unlike the same-day-retry case above, this does **not** self-heal the
+next day - the chain is permanently broken until fixed by hand: destroy
+the stale bookmark (`SOURCE#zfssend-TARGETSLUG`), then destroy the
+target dataset recursively (this also removes its own accumulated
+snapshots - no separate cleanup needed), then let the next run do a
+fresh full resend. As always, this is caught and logged as an `ERROR`,
+not a silent failure or a hard abort - other configured repos for the
+same dataset (e.g. a borg destination) continue running normally, and
+this is a full-resync inconvenience, not data loss, as long as at least
+one other backup destination for that data exists.
+
+**How this actually happens in practice:** a dataset that's backed up
+to *both* a borg repo and a zfssend target shares the exact same
+source-side ZFS snapshot lifecycle - there's only one snapshot per
+interval-date, used by every configured repo for that dataset. If
+that snapshot needs to be destroyed and retaken for some OTHER repo's
+sake (e.g. working around a permissions problem that was blocking just
+the borg destination, by deleting the snapshot and re-running so it
+gets recreated after the fix), any zfssend target that had *already*
+successfully processed the original snapshot is silently put in this
+broken state too - even though the borg side of that same retry works
+fine. This is easy to miss, since nothing about "destroy this snapshot
+and retry" looks zfssend-specific at the time.
+
+**Why deferred:** genuinely hard to detect proactively (ZFS itself
+doesn't offer an easy way to notice "this name exists again, but it's
+a different snapshot than before" without deliberately tracking GUIDs
+over time, which this project doesn't do anywhere else). The practical
+mitigation for now is procedural, not code: documented as a caveat next
+to `REPOLIST`/zfssend in `sample.conf`, so it's visible at the point
+where someone would combine zfssend with another repo type for the same
+dataset - see that comment for the actual warning. Revisit if this
+turns out to be common enough to justify GUID-based detection.
+
 ## LOCAL_READABLE_BY_OTHERS is logged, not enforced
 
 **What happens:** the config option exists, gets read and logged, but
