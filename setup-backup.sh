@@ -143,8 +143,8 @@ echo "In addition to (or instead of) borg, backups can go to another ZFS"
 echo "pool via native 'zfs send/receive' - see filesystem/zfs_send_hdlr.sh."
 USE_ZFSSEND=0
 ZFSSEND_TARGET=""
-if ask_yes_no "Use a zfssend target?" "n"; then
-    USE_ZFSSEND=1
+
+pick_zfssend_target() {
     if command -v zfs >/dev/null 2>&1; then
         ZFS_TARGET_CANDIDATES=()
         while IFS= read -r d; do
@@ -179,6 +179,11 @@ if ask_yes_no "Use a zfssend target?" "n"; then
             *) break ;;
         esac
     done
+}
+
+if ask_yes_no "Use a zfssend target?" "n"; then
+    USE_ZFSSEND=1
+    pick_zfssend_target
 fi
 
 # ===========================================================================
@@ -407,6 +412,32 @@ done
 RECURSIVE_FLAG=""
 if ask_yes_no "Back up '$SOURCE_DATASET' recursively (include child datasets)?" "n"; then
     RECURSIVE_FLAG="r"
+fi
+
+if [ "$USE_ZFSSEND" -eq 1 ]; then
+    # The zfssend target picked in Step 2 is just a BASE - the actual
+    # receiving dataset is "$ZFSSEND_TARGET/$SOURCE_DATASET" (see
+    # backendZfsSend in filesystem/zfs_send_hdlr.sh). This wasn't
+    # knowable back in Step 2, since the source dataset didn't exist yet
+    # at that point - showing the real resulting path here, now that
+    # both halves are known, catches the easy mistake of picking a base
+    # that already ends in (part of) the source path, which silently
+    # duplicates it (e.g. picking ".../hdd_zfs_guests" as the base for
+    # source "hdd_zfs_guests/shares" results in
+    # ".../hdd_zfs_guests/hdd_zfs_guests/shares", not the intended
+    # ".../hdd_zfs_guests/shares").
+    while :; do
+        echo ""
+        echo "zfssend target base: $ZFSSEND_TARGET"
+        echo "Source dataset:      $SOURCE_DATASET"
+        echo "==> Resulting target dataset: $ZFSSEND_TARGET/$SOURCE_DATASET"
+        if ask_yes_no "Is this the target dataset you intended?" "y"; then
+            break
+        fi
+        echo ""
+        echo "Picking the zfssend target again:"
+        pick_zfssend_target
+    done
 fi
 
 # ===========================================================================

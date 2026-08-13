@@ -102,6 +102,60 @@ where someone would combine zfssend with another repo type for the same
 dataset - see that comment for the actual warning. Revisit if this
 turns out to be common enough to justify GUID-based detection.
 
+## Overlapping runs abort instead of queueing
+
+**What happens:** `acquire_lock()` in `borgsnap_ng.sh` prevents
+concurrent runs via a single `mkdir`-based lock - but if the lock is
+already held by another live run, it doesn't wait: it `die()`s
+immediately ("Another borgsnap_ng instance (PID X) is running -
+aborting"). If one run happens to take a while (a big monthly
+`BORG_VERIFY` at "data" depth, a slow remote, a large `RESTORE_VERIFY`
+extract), any other run whose schedule fires during that window is lost
+entirely - not delayed, not retried, just gone until its next
+regularly scheduled time.
+
+**Compounding factor: the lock is global, not per-dataset.** `LOCKDIR`
+defaults to a single fixed path (`/tmp/borgsnap_ng.lock`, or whatever
+`BORGSNAP_LOCKDIR` is set to) - the systemd unit templates don't
+parameterize it per instance/dataset. This means two *completely
+unrelated* datasets' scheduled runs can block each other on the same
+machine just because their timers happened to overlap, even though
+there's no actual resource conflict between them (different source
+dataset, different repos, nothing shared).
+
+**What would be better, per the reporter's request:** instead of
+aborting outright, a run that finds the lock held should wait (with
+some reasonable timeout, to still catch a genuinely stuck/dead run -
+the existing stale-PID detection would need to stay, just reached after
+waiting instead of immediately) and then proceed once the earlier run
+releases the lock, rather than being skipped entirely.
+
+**Timeout: 12h default, configurable.** Long enough to comfortably
+outlast any legitimate run (including a slow remote transfer or a big
+`BORG_VERIFY` at "data" depth), short enough to still catch a genuinely
+wedged process well before the next scheduled run would normally fire
+for most reasonable schedules. Should be overridable (env var or config
+option, e.g. `LOCK_WAIT_TIMEOUT`) rather than hardcoded, since "how long
+a run can legitimately take" varies a lot by dataset size/network.
+
+**Also worth deciding alongside that:** whether the lock should become
+per-dataset/per-config (e.g. derived from the config file's path, so
+`hdd_zfs_guests/home` and `hdd_zfs_guests/shares` never contend with
+each other in the first place) in addition to, or instead of, making
+the *same*-dataset case wait rather than abort. Per-dataset locking
+would remove the "unrelated datasets block each other" half of the
+problem entirely; a wait-instead-of-abort change addresses the "two
+runs of the same dataset overlap" half. Probably want both, but they're
+separable changes.
+
+**Why deferred:** the timeout value itself is now decided (see above) -
+what's left is implementation: a wait/poll loop around the existing
+`mkdir`-based lock (with the stale-PID check still running periodically
+during the wait, not just once at the start, so a run that dies partway
+through the wait window is still caught promptly rather than only after
+the full 12h), plus deciding whether per-dataset locking happens in the
+same change or as a separate follow-up.
+
 ## LOCAL_READABLE_BY_OTHERS is logged, not enforced
 
 **What happens:** the config option exists, gets read and logged, but
@@ -276,3 +330,36 @@ is normal across a codebase that grew incrementally, and tightening it
 further is best done incrementally too (e.g. as part of whatever FIX
 touches a given function next) rather than as one large, high-risk pass
 across everything at once.
+
+## No support for borg's --exclude-if-present
+
+**What happens:** there's currently no way to exclude specific
+directories (and everything under them) from a backup on a per-folder
+basis. Borg itself supports this natively via `--exclude-if-present
+FILENAME` - any directory containing a file with that name gets skipped
+entirely, letting someone mark a folder as "don't back this up" (a
+scratch/cache directory, a huge downloads folder, etc.) without touching
+this project's config at all, just by dropping a marker file into it.
+
+**What's needed:** a new optional config variable (e.g.
+`EXCLUDE_IF_PRESENT`, defaulting to `.nobackup` when unset - matching
+the reporter's requested default) threaded into the actual `borg create`
+command construction alongside the existing `--compression`/
+`--files-cache` flags (see FIX #68, which is exactly the kind of place
+this would need to be wired in - a config value read and validated by
+`cfg_file_hdlr.sh` but not yet actually reaching the real borg command).
+Also needs a `sample.conf`/`borgsnap_ng.sh` header entry, and - per the
+reporter's request - an interactive prompt in `setup-backup.sh`
+alongside the other borg-option prompts (`COMPRESS`, `CACHEMODE`, etc.),
+not just a config-file-only option.
+
+**Open question before building it:** whether to support only a single
+marker filename, or multiple (borg's own `--exclude-if-present` can be
+given more than once for more than one marker name) - if multiple, the
+config value would need a separator convention (semicolon, matching
+`REPOLIST`'s style, seems most consistent with the rest of this
+project's config syntax).
+
+**Why deferred:** straightforward to build, just not done yet - no
+design uncertainty blocking it like some of the other entries here,
+purely a matter of prioritization.
